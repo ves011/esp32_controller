@@ -5,6 +5,10 @@
  *      Author: viorel_serbu
  */
 
+/**
+ * @file project_specific.h
+ * @brief defines the controller type: ACTIVE_CONTROLLER and ID: CTRL_DEV_ID
+ */
 #ifndef MAIN_PROJECT_SPECIFIC_H_
 #define MAIN_PROJECT_SPECIFIC_H_
 

@@ -5,3 +5,5 @@
 /certs/iotdev.gnet.crt
 /certs/iotdev.gnet.key
 /certs/wifi_credentials.h
+/doc/
+/Doxyfile
