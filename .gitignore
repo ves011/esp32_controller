@@ -1,0 +1,7 @@
+/build/
+/certs/ca.crt
+/certs/client.crt
+/certs/client.key
+/certs/iotdev.gnet.crt
+/certs/iotdev.gnet.key
+/certs/wifi_credentials.h
