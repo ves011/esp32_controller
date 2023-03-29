@@ -5,14 +5,31 @@
  *      Author: viorel_serbu
  */
 
+/** @pumpop.h */
+
+/**
+ * @file pumpop.h
+ * @brief implements control logic for submersible water pump
+ */
 #ifndef PUMP_OP_PUMPOP_H_
 #define PUMP_OP_PUMPOP_H_
 
+/**
+ * @defgroup  ESP32_GPIO pump ctrl GPIO
+ *
+ * @{
+ */
+ /** Pressure sensor */
 #define SENSOR_PIN				(5)	//j5/5
+ /** Pressure sensor ADC channel = SENSOR_PIN -1*/
 #define	SENSOR_ADC_CHANNEL		(4)
+ /** ACS712 current sensor */
 #define CURRENT_PIN				(4)	//j5/6
+ /** ACS712 current sensor ADC channel = CURRENT_PIN - 1*/
 #define CURRENT_ADC_CHANNEL		(3)
+ /** Pump ON/OF control pin */
 #define PUMP_ONOFF_PIN			(6)	//j5/8
+/** @} */
 
 	#define PUMP_ON					(1)
 	#define PUMP_OFF				(0)
@@ -31,12 +48,19 @@
 
 #define CMD_TIMER_GROUP			TIMER_GROUP_1
 #define CMD_TIMER_INDEX			TIMER_0
+/** How long(msec) the button has to be pressed  to send the command*/
 #define PUSH_TIME_MS			(3000)
 
+ /** Name of the file storing pressure sensor output (mV) for 0kPA */
 #define OFFSET_FILE				"psensor_voffset.txt"
+ /** Name of the file storing operating limits for pump - see pump_limits definition */
 #define LIMITS_FILE				"pump_limits.txt"
+ /** Name of the file storing pump status: online | offline */
 #define OPERATIONAL_FILE		"pump_status.txt"
 
+/**
+ * @brief pump command and parameters
+ */
 struct
 	{
     struct arg_str *op;
@@ -53,29 +77,56 @@ typedef struct
 	int v_offset;
 	} psensor_offset_t;
 
+/**
+ * @brief pump limits structure passed to rw_params() function.
+ */
 typedef struct
 	{
-	uint32_t min_val;
-	uint32_t max_val;
-	uint32_t faultc;
-	uint32_t stdev;
-	uint32_t overp_lim;
-	uint32_t pump_op_response;
+	uint32_t min_val;			/*!< min pressure limit										*/
+	uint32_t max_val;			/*!< max pressure limit										*/
+	uint32_t faultc;			/*!< max acceptable current when pump running (mA)			*/
+	uint32_t stdev;				/*!< max acceptable stdev for pressure measurements
+										below this limit the measurement is OK
+										above this limit measurement is rejected: too noisy	*/
+	uint32_t overp_lim;			/*!< how long the pressure needs to be above max_val before the pump to be stopped (sec) */
 	} pump_limits_t;
 
 extern int pump_pres_stdev;
 
+/**
+ * @brief dispatch pump commands based on arguments
+ * @return 0 on success, 1 on error
+ */
 int do_pumpop(int argc, char **argv);
+
+/**
+ * @brief gets the pump state and publish response on state topic
+ * @return ESP_OK or ESP_FAIL
+ */
 int get_pump_state(void);
+
+/**
+ * @brief start pump
+ * @param from
+ * 		if from == 1 function is called inside pump monitor loop
+ * @return 	ESP_OK on success
+ * 			ESP_FAIL on error
+ */
 int start_pump(int from);
+
+/**
+ * @brief stop pump
+ * @param from
+ * 		if from == 1 function is called inside pump monitor loop
+ * @return 	ESP_OK on success
+ * 			ESP_FAIL on error
+ */
 int stop_pump(int from);
 void register_pumpop();
-int read_pump_adc(void);
 int set_pump_0_offset(void);
 int pump_operational(int po);
 void pump_mon_task(void *pvParameters);
 void process_adc_current(minmax_t *min, minmax_t *max);
-void publish_MQTT_client_status(void);
 
 
 #endif /* PUMP_OP_PUMPOP_H_ */

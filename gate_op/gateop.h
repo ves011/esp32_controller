@@ -72,23 +72,12 @@ struct {
 
 typedef struct
 	{
-	//uint64_t last_pulse_time;
-	//uint64_t act_time;
 	uint32_t pulse_count;
-	//uint32_t pulse_w;
 	uint32_t moving_state;
 	uint32_t op_response;
 	uint32_t source;
 	uint64_t time;
 	} gate_evt_t;
-
-typedef struct
-	{
-	uint32_t	ip;
-	uint32_t 	port;
-	uint32_t	tok;
-	} gate_client_t;
-
 
 int open_gate();
 int close_gate();
