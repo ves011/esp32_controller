@@ -9,7 +9,7 @@
 
 /**
  * @file pumpop.h
- * @brief implements control logic for submersible water pump
+ * @brief header file definitions for control logic of submersible water pump
  */
 #ifndef PUMP_OP_PUMPOP_H_
 #define PUMP_OP_PUMPOP_H_

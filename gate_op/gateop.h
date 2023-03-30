@@ -5,6 +5,11 @@
  *      Author: viorel_serbu
  */
 
+/**
+ * @file gateop.h
+ * @brief header file definitions for control logic of sliding gate
+ */
+
 #ifndef GATEOP_H_
 #define GATEOP_H_
 

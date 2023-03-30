@@ -5,6 +5,10 @@
  *      Author: viorel_serbu
  */
 
+/**
+ * @file pumpop.c
+ * @brief implementation for control logic of submersible water pump controller
+ */
 
 #include <stdio.h>
 #include <string.h>

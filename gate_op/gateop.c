@@ -5,6 +5,11 @@
  *      Author: viorel_serbu
  */
 
+ /**
+ * @file gateop.c
+ * @brief implementation logic for slifing gate controller
+ */
+
 #include <stdio.h>
 #include <string.h>
 #include "driver/pcnt.h"
