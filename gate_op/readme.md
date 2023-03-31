@@ -2,7 +2,7 @@
 
 gateop.c implement functions to control the operation of RB400 sliding gate
 
-#Theory of operation
+## Theory of operation
 Gate gearmotor is controlled by 2 signals <b>Open</b> and <b>Close</b><br>
 Gate state is sensed via <b>OGI</b>(open gate indicator) signal<br>
 Open and Close are NO contacts. A short on these inputs will trigger gate sliding.<br>
