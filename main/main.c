@@ -40,13 +40,14 @@
 #include "hal/adc_types.h"
 #include "adc_op.h"
 #include "pumpop.h"
+#include "westaop.h"
 
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
 
 #define TAG "ctrl_dev"
 #define PROMPT_STR "CTRLDEV"
-#define CONFIG_STORE_HISTORY 0
+#define CONFIG_STORE_HISTORY 1
 #define CONFIG_CONSOLE_MAX_COMMAND_LINE_LENGTH	1024
 
 #include "wifi_credentials.h"
@@ -102,6 +103,8 @@ void app_main(void)
 	int bp_ctrl = PUMP_ONLINE_CMD;
 #elif ACTIVE_CONTROLLER == AGATE_CONTROLLER
 	int bp_ctrl = 6; //IO6 on J5 pin 8
+#elif ACTIVE_CONTROLLER == WESTA_CONTROLLER
+	int bp_ctrl = 8; //IO8 on J4 pin 8
 #endif
 	gpio_config_t io_conf;
 	io_conf.intr_type = GPIO_INTR_DISABLE;
@@ -157,15 +160,16 @@ void app_main(void)
 		register_mqtt();
 	tcp_log_init();
 	esp_log_set_vprintf(my_log_vprintf);
-	//esp_console_repl_t *repl = NULL;
-    //esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+#ifdef WITH_CONSOLE
+	esp_console_repl_t *repl = NULL;
+    esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
     /* Prompt to be printed before each line.
      * This can be customized, made dynamic, etc.
      */
-    //repl_config.prompt = PROMPT_STR ">";
-    //repl_config.max_cmdline_length = CONFIG_CONSOLE_MAX_COMMAND_LINE_LENGTH;
+    repl_config.prompt = PROMPT_STR ">";
+    repl_config.max_cmdline_length = CONFIG_CONSOLE_MAX_COMMAND_LINE_LENGTH;
 
-/*
+
 #if CONFIG_STORE_HISTORY
 	initialize_filesystem();
 	repl_config.history_save_path = HISTORY_PATH;
@@ -173,12 +177,12 @@ void app_main(void)
 #else
 	ESP_LOGI(TAG, "Command history disabled");
 #endif
-*/
+#endif
 
 	// start task to sync local time with NTP server
 
 	/* Register commands */
-	//esp_console_register_help_command();
+	esp_console_register_help_command();
 	register_system();
 	register_wifi();
 
@@ -188,8 +192,11 @@ void app_main(void)
 	register_gateop();
 #elif ACTIVE_CONTROLLER == PUMP_CONTROLLER
 	register_pumpop();
+#elif ACTIVE_CONTROLLER == WESTA_CONTROLLER
+	register_westaop();
 #endif
 
+#ifdef WITH_CONSOLE
 #if defined(CONFIG_ESP_CONSOLE_UART_DEFAULT) || defined(CONFIG_ESP_CONSOLE_UART_CUSTOM)
     esp_console_dev_uart_config_t hw_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_uart(&hw_config, &repl_config, &repl));
@@ -199,38 +206,15 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_console_new_repl_usb_cdc(&hw_config, &repl_config, &repl));
 
 #elif defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG)
-    //esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
-    //repl_config.task_stack_size = 8192;
-    //ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl));
+    esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
+    repl_config.task_stack_size = 8192;
+    ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl));
     //ESP_LOGI(TAG, "console stack: %d", repl_config.task_stack_size);
 
 #else
 	#error Unsupported console type
 #endif
 
-#if CONFIG_PM_ENABLE
-#if CONFIG_IDF_TARGET_ESP32S3
-	esp_pm_config_esp32s3_t pm_config;
-
-	int mhz = 80;
-	pm_config.max_freq_mhz = mhz;
-	pm_config.min_freq_mhz = rtc_clk_xtal_freq_get();
-	pm_config.light_sleep_enable = false;
-	printf("\n XTAL freq = %d\n", pm_config.min_freq_mhz);
-	printf("\n CPU  freq = %d\n", esp_clk_cpu_freq() / MHZ);
-
-	/*
-	ESP_ERROR_CHECK(esp_pm_configure(&pm_config));
-	while (esp_clk_cpu_freq() / MHZ != mhz)
-		{
-        vTaskDelay(pdMS_TO_TICKS(200));
-        printf("Frequency is %d MHz\n", esp_clk_cpu_freq() / MHZ);
-        }
-	*/
+	ESP_ERROR_CHECK(esp_console_start_repl(repl));
 #endif
-#endif
-
-	//ESP_ERROR_CHECK(esp_console_start_repl(repl));
-	//while(1)
-	//	sleep(10);
 	}

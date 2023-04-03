@@ -135,12 +135,12 @@ static void config_gate_gpio(void)
     pcnt_config_t pcnt_config = {
         // Set PCNT input signal and control GPIOs
         .pulse_gpio_num = GATE_PIN_SENSE,
-        .ctrl_gpio_num = PCNT_PIN_CTRL,
+        .ctrl_gpio_num = PCNT_PIN_CTRL,	//actually not used
         .channel = PCNT_CHANNEL_0,
         .unit = PCNT_UNIT_0,
         // What to do on the positive / negative edge of pulse input?
-        .pos_mode = PCNT_COUNT_DIS,   // Count up on the positive edge
-        .neg_mode = PCNT_COUNT_INC,   // Keep the counter value on the negative edge
+        .pos_mode = PCNT_COUNT_DIS,   // Keep the counter value on the positive edge
+        .neg_mode = PCNT_COUNT_INC,   //  Count up on the negative edge
         // What to do when control input is low or high?
         .hctrl_mode = PCNT_MODE_KEEP, // Reverse counting direction if low
         .lctrl_mode = PCNT_MODE_KEEP, //PCNT_MODE_DISABLE,    // Keep the primary counter mode if high
