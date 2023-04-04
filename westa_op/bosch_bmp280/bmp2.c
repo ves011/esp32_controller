@@ -498,7 +498,7 @@ int8_t bmp2_get_sensor_data(struct bmp2_data *comp_data, struct bmp2_dev *dev)
                 /* Compensate the pressure and/or temperature
                  * data from the sensor
                  */
-            ESP_LOGI("BMP2", "t = %0x  p = %0x", uncomp_data.temperature, uncomp_data.pressure);
+            //ESP_LOGI("BMP2", "t = %0x  p = %0x", uncomp_data.temperature, uncomp_data.pressure);
                 rslt = bmp2_compensate_data(&uncomp_data, comp_data, dev);
             }
         }

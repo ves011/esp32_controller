@@ -18,14 +18,20 @@
 
 #define BMP280_I2C_ADDRESS			0x76
 
+#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS
+
 struct
 	{
-    struct arg_str *op;
     struct arg_str *dst;
-    struct arg_str *reg_addr;
+    struct arg_str *op;
+    struct arg_int *os_mode;
+    struct arg_int *filter;
+    struct arg_int *odr;
+    struct arg_int *power_mode;
     struct arg_end *end;
 	} westaop_args;
 
 void register_westaop(void);
+int do_westaop(int argc, char **argv);
 
 #endif /* WESTA_OP_WESTAOP_H_ */
