@@ -12,11 +12,13 @@
 #include "driver/i2c.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
+#include "math.h"
 #include "common_defines.h"
 #include "mqtt_ctrl.h"
 #include "utils.h"
 #include "bmp2_defs.h"
 #include "bmp2.h"
+#include "dht22.h"
 #include "westaop.h"
 
 #if ACTIVE_CONTROLLER == WESTA_CONTROLLER
@@ -25,21 +27,31 @@ static bmp2_dev_t bmpdev;
 static uint8_t osrs_t, osrs_p;
 
 static const char *TAG = "WESTA OP";
+double psl;
 
 static int get_bmp_data(bmp_data_t *bmpdata)
 	{
 	int res = BMP2_E_COM_FAIL;
 	uint8_t reg_addr = 0xf4, reg_data;
 	struct bmp2_status bmps;
-	reg_data = 0;
-	reg_data = osrs_t << 5 | osrs_p << 2 | 1;
-	res = bmp2_set_regs(&reg_addr, &reg_data, 1, &bmpdev);
+	if(bmpdev.power_mode == BMP2_POWERMODE_FORCED)
+		{
+		reg_data = 0;
+		reg_data = osrs_t << 5 | osrs_p << 2 | 1;
+		res = bmp2_set_regs(&reg_addr, &reg_data, 1, &bmpdev);
+		}
+	else
+		res = BMP2_OK;
+
 	if(res == BMP2_OK)
 		{
-		while((res = bmp2_get_status(&bmps, &bmpdev) == BMP2_OK) && bmps.measuring == 1)
+		if(bmpdev.power_mode == BMP2_POWERMODE_FORCED)
 			{
-			vTaskDelay(pdMS_TO_TICKS(10));
-			//ESP_LOGI(TAG, "bmp280 busy");
+			while((res = bmp2_get_status(&bmps, &bmpdev) == BMP2_OK) && bmps.measuring == 1)
+				{
+				vTaskDelay(pdMS_TO_TICKS(10));
+				//ESP_LOGI(TAG, "bmp280 busy");
+				}
 			}
 		res = bmp2_get_sensor_data(bmpdata, &bmpdev);
 		if(res == BMP2_OK)
@@ -186,12 +198,30 @@ int do_westaop(int argc, char **argv)
 static void pth_poll()
 	{
 	bmp_data_t bmpdata;
+	dht_data_t dhtdata;
+	double pnorm;
 	int res;
+	char bufb[100], bufd[100];
+	res = dht_init();
 	while(1)
 		{
 		res = get_bmp_data(&bmpdata);
 		if(res == BMP2_OK)
-			rw_tpdata(PARAM_WRITE, bmpdata.temperature, bmpdata.pressure, 0, 0);
+			{
+			pnorm = psl * pow((1 - bmpdata.pressure/psl), 5.255);
+			sprintf(bufb, "%.3lf %.3lf %3lf", bmpdata.temperature, bmpdata.pressure, pnorm);
+			}
+		else
+			strcpy(bufb, "0.0 0.0 0.0");
+		res = get_dht_data(&dhtdata);
+		if(res == ESP_OK)
+			{
+			sprintf(bufd, " %.1lf %.1lf", dhtdata.humidity, dhtdata.temperature);
+			}
+		else
+			strcpy(bufd, " 0.0 0.0");
+		strcat(bufb, bufd);
+		rw_tpdata(PARAM_WRITE, bufb);
 		vTaskDelay(PTH_POLL_INT);
 		}
 	}
@@ -204,6 +234,8 @@ void register_westaop(void)
 	bmpdev.read = bmp280_read;
 	bmpdev.write = bmp280_write;
 	bmpdev.intf_ptr = NULL;
+	dht_data_t dhtd;
+	psl = DEFAULT_PSL;
 	int res = i2c_master_init();
 	res = bmp2_init(&bmpdev);
 	if(res == BMP2_OK)
@@ -236,7 +268,16 @@ void register_westaop(void)
 		}
 	if(res != BMP2_OK)
 		ESP_LOGI(TAG, "Cannot initialize i2c driver. Error = %d", res);
-
+// test for normal mode
+//	bmp_data_t bmpdata;
+//	while(1 && res == BMP2_OK)
+//		{
+//		get_bmp_data(&bmpdata);
+//		vTaskDelay(2000 / portTICK_PERIOD_MS); //wait 2 seconds
+//		}
+// end test for normal mode
+	//res = dht_init();
+	//get_dht_data(&dhtd);
 	westaop_args.op = arg_str1(NULL, NULL, "<dest>", "bmp | dht");
 	westaop_args.dst = arg_str1(NULL, NULL, "<op>", "status | set | read");
 	westaop_args.os_mode = arg_int0(NULL, NULL, "<os_mode>", "over sampling mode");

@@ -18,7 +18,9 @@
 
 #define BMP280_I2C_ADDRESS			0x76
 
-#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS
+#define PTH_POLL_INT				2000 / portTICK_PERIOD_MS //1800000 / portTICK_PERIOD_MS
+
+#define DEFAULT_PSL					1013.25
 
 struct
 	{
@@ -30,6 +32,8 @@ struct
     struct arg_int *power_mode;
     struct arg_end *end;
 	} westaop_args;
+
+extern double psl;
 
 void register_westaop(void);
 int do_westaop(int argc, char **argv);
