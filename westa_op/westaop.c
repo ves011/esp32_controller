@@ -27,7 +27,9 @@ static bmp2_dev_t bmpdev;
 static uint8_t osrs_t, osrs_p;
 
 static const char *TAG = "WESTA OP";
-double psl;
+static double psl;
+static double hmp;
+static double pnorm;
 
 static int get_bmp_data(bmp_data_t *bmpdata)
 	{
@@ -58,8 +60,8 @@ static int get_bmp_data(bmp_data_t *bmpdata)
 			{
 			char buf[50];
 			ESP_LOGI(TAG, "Temperature = %8.3f", bmpdata->temperature);
-			ESP_LOGI(TAG, "Pressure    = %8.3f", bmpdata->pressure);
-			sprintf(buf, "%.3f\1%.3f", bmpdata->temperature, bmpdata->pressure);
+			ESP_LOGI(TAG, "Pressure    = %8.3f", bmpdata->pressure/100.);
+			sprintf(buf, "BMP\1%.3f\1%.3f", bmpdata->temperature, bmpdata->pressure);
 			publish_state(buf, 0, 0);
 			}
 		}
@@ -78,7 +80,7 @@ static void get_bmp_status(void)
 		if(res == BMP2_OK)
 			{
 			ESP_LOGI(TAG, "filter: %d, os_pres: %d, os_temp: %d, pmode: %d",  conf.filter, conf.os_pres, conf.os_temp, pmode);
-			sprintf(buf, "%d\1%d\1%d\1%d", conf.filter, conf.os_pres, conf.os_temp, pmode);
+			sprintf(buf, "BMP%d\1%d\1%d\1%d", conf.filter, conf.os_pres, conf.os_temp, pmode);
 			publish_state(buf, 0, 0);
 			}
 		}
@@ -123,8 +125,6 @@ static BMP2_INTF_RET_TYPE bmp280_write(uint8_t reg_addr, const uint8_t *reg_data
 
 static esp_err_t i2c_master_init(void)
 	{
-    int i2c_master_port = I2C_MASTER_NUM;
-
     i2c_config_t conf = {
         .mode = I2C_MODE_MASTER,
         .sda_io_num = I2C_MASTER_SDA_IO,
@@ -134,9 +134,9 @@ static esp_err_t i2c_master_init(void)
         .master.clk_speed = I2C_MASTER_FREQ_HZ,
     	};
 
-    i2c_param_config(i2c_master_port, &conf);
+    i2c_param_config(I2C_MASTER_NUM, &conf);
 
-    return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+    return i2c_driver_install(I2C_MASTER_NUM, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
 	}
 
 int do_westaop(int argc, char **argv)
@@ -144,6 +144,7 @@ int do_westaop(int argc, char **argv)
 	int res = BMP2_OK;
 	struct bmp2_config conf;
 	bmp_data_t bmpdata;
+	dht_data_t dhtdata;
 	int nerrors = arg_parse(argc, argv, (void **)&westaop_args);
     if (nerrors != 0)
     	{
@@ -152,41 +153,93 @@ int do_westaop(int argc, char **argv)
     	}
     if(!strcmp(westaop_args.dst->sval[0], "bmp"))
     	{
-    	if(westaop_args.op->count)
-    		{
-    		if(!strcmp(westaop_args.op->sval[0], "read"))
-    			get_bmp_data(&bmpdata);
-    		else if(!strcmp(westaop_args.op->sval[0], "state"))
-   				get_bmp_status();
-   			else if(!strcmp(westaop_args.op->sval[0], "reset"))
-   				bmp2_soft_reset(&bmpdev);
-    		else if(!strcmp(westaop_args.op->sval[0], "set"))
-    			{
-    			if(bmp2_get_config(&conf, &bmpdev) == BMP2_OK)
-    				{
-    				if(westaop_args.os_mode->count)
-    					conf.os_mode = westaop_args.os_mode->ival[0];
-    				if(westaop_args.filter->count)
-    					conf.filter = westaop_args.filter->ival[0];
-    				if(westaop_args.odr->count)
-    					conf.odr = westaop_args.odr->ival[0];
-    				if((res = bmp2_set_config(&conf, &bmpdev)) != BMP2_OK)
-    					ESP_LOGI(TAG, "Could not set new configuration. err = %d", res);
-    				if(westaop_args.power_mode->count)
-    					res = bmp2_set_power_mode(westaop_args.power_mode->ival[0], &conf, &bmpdev);
-    				else
-    					res = bmp2_set_config(&conf, &bmpdev);
-    				if(res!= BMP2_OK)
-    					ESP_LOGI(TAG, "Could not set new configuration. err = %d", res);
-    				}
-    			else
-    				ESP_LOGI(TAG, "Could not read configuration. err = %d", res);
-    			}
-    		}
-
+   		if(!strcmp(westaop_args.op->sval[0], "read"))
+   			get_bmp_data(&bmpdata);
+   		else if(!strcmp(westaop_args.op->sval[0], "state"))
+			get_bmp_status();
+		else if(!strcmp(westaop_args.op->sval[0], "reset"))
+			bmp2_soft_reset(&bmpdev);
+   		else if(!strcmp(westaop_args.op->sval[0], "set"))
+   			{
+   			if(bmp2_get_config(&conf, &bmpdev) == BMP2_OK)
+   				{
+   				if(westaop_args.os_mode->count)
+   					conf.os_mode = westaop_args.os_mode->ival[0];
+   				if(westaop_args.filter->count)
+   					conf.filter = westaop_args.filter->ival[0];
+   				if(westaop_args.odr->count)
+   					conf.odr = westaop_args.odr->ival[0];
+   				if((res = bmp2_set_config(&conf, &bmpdev)) != BMP2_OK)
+   					ESP_LOGI(TAG, "Could not set new configuration. err = %d", res);
+   				if(westaop_args.power_mode->count)
+   					res = bmp2_set_power_mode(westaop_args.power_mode->ival[0], &conf, &bmpdev);
+   				else
+   					res = bmp2_set_config(&conf, &bmpdev);
+   				if(res!= BMP2_OK)
+   					ESP_LOGI(TAG, "Could not set new configuration. err = %d", res);
+   				}
+   			else
+   				ESP_LOGI(TAG, "Could not read configuration. err = %d", res);
+   			}
+   		else if(!strcmp(westaop_args.op->sval[0], "pset"))
+   			{
+   			pnorm_param_t param = {0, 0};
+   			char buf[100];
+   			if(westaop_args.os_mode->count == 0) // no arguments just display values
+   				{
+   				if(rw_params(PARAM_READ, PARAM_PNORM, &param) == ESP_OK)
+					{
+					ESP_LOGI(TAG, "pnorm calculation parameters: psl = %.3lf, hmp = %.3lf", param.psl, param.hmp);
+					sprintf(buf, "BMP\1 1\1%.3lf\1%.3lf", param.psl, param.hmp);
+					}
+				else
+					{
+					ESP_LOGI(TAG, "Error reading parameters pnorm\nReverting to default values: psl = %.3lf, hmp = %.3lf", DEFAULT_PSL, DEFAULT_ELEVATION);
+					sprintf(buf, "BMP\1 0\1%.3lf\1%.3lf", DEFAULT_PSL, DEFAULT_ELEVATION);
+					}
+				publish_state(buf, 0, 0);
+   				}
+   			else
+   				{
+   				if(westaop_args.filter->count == 0)
+   					{
+   					ESP_LOGI(TAG, "You need to provide both arguments for <pset>");
+   					}
+   				else
+   					{
+   					param.psl = westaop_args.os_mode->ival[0] / 1000.;
+   					param.hmp = westaop_args.filter->ival[0] / 100.;
+   					if(param.psl <= 0. || param.hmp <= 0.)
+   						ESP_LOGI(TAG, "parameters error: %.3lf %.2lf", param.psl, param.hmp);
+   					else
+   						{
+   						if(rw_params(PARAM_WRITE, PARAM_PNORM, &param) == ESP_OK)
+							{
+							psl = param.psl;
+							hmp = param.hmp;
+							pnorm = psl * pow((1 - hmp/44330), 5.255);
+							sprintf(buf, "BMP\1 1\1%.3lf\1%.3lf\1%.3lf", param.psl, param.hmp, pnorm);
+							}
+						else
+							{
+							ESP_LOGI(TAG, "Eror updating pnorm parameters.\nKeeping old values: %.3lf, %.3lf", psl, hmp);
+							sprintf(buf, "BMP\1 0\1%.3lf\1%.3lf", psl, hmp);
+							}
+						publish_state(buf, 0, 0);
+   						}
+   					}
+   				}
+   			}
     	}
     else if(!strcmp(westaop_args.dst->sval[0], "dht"))
     	{
+    	if(!strcmp(westaop_args.op->sval[0], "read"))
+    		get_dht_data(&dhtdata);
+    	if(!strcmp(westaop_args.op->sval[0], "state"))
+    		{
+    		res = get_dht_status();
+    		ESP_LOGI(TAG, "DHT status: %d", res);
+    		}
     	}
     else
     	{
@@ -199,29 +252,28 @@ static void pth_poll()
 	{
 	bmp_data_t bmpdata;
 	dht_data_t dhtdata;
-	double pnorm;
 	int res;
 	char bufb[100], bufd[100];
 	res = dht_init();
+	pnorm = psl * pow((1 - hmp/44330), 5.255);
 	while(1)
 		{
 		res = get_bmp_data(&bmpdata);
 		if(res == BMP2_OK)
-			{
-			pnorm = psl * pow((1 - bmpdata.pressure/psl), 5.255);
 			sprintf(bufb, "%.3lf %.3lf %3lf", bmpdata.temperature, bmpdata.pressure, pnorm);
-			}
 		else
 			strcpy(bufb, "0.0 0.0 0.0");
+
 		res = get_dht_data(&dhtdata);
 		if(res == ESP_OK)
-			{
 			sprintf(bufd, " %.1lf %.1lf", dhtdata.humidity, dhtdata.temperature);
-			}
 		else
 			strcpy(bufd, " 0.0 0.0");
+
 		strcat(bufb, bufd);
 		rw_tpdata(PARAM_WRITE, bufb);
+		sprintf(bufb, "BMPDHT\1%.3lf\1%.3lf\1%.3lf\1%.1lf\1%.1lf", bmpdata.temperature, bmpdata.pressure, pnorm, dhtdata.humidity, dhtdata.temperature);
+		publish_monitor(bufb, 0, 0);
 		vTaskDelay(PTH_POLL_INT);
 		}
 	}
@@ -234,8 +286,18 @@ void register_westaop(void)
 	bmpdev.read = bmp280_read;
 	bmpdev.write = bmp280_write;
 	bmpdev.intf_ptr = NULL;
-	dht_data_t dhtd;
-	psl = DEFAULT_PSL;
+	pnorm_param_t param = {0, 0};
+	if(rw_params(PARAM_READ, PARAM_PNORM, &param) == ESP_OK)
+		{
+		psl = param.psl;
+		hmp = param.hmp;
+		}
+	else
+		{
+		psl = DEFAULT_PSL;
+		hmp = DEFAULT_ELEVATION;
+		}
+
 	int res = i2c_master_init();
 	res = bmp2_init(&bmpdev);
 	if(res == BMP2_OK)
@@ -247,11 +309,17 @@ void register_westaop(void)
     		ESP_LOGI(TAG, "bmp280 cal param: %6d %6d \n%6d %6d %6d %6d %6d\n%6d %6d %6d %6d %6d", bmpdev.calib_param.dig_t1, bmpdev.calib_param.dig_t2
     								, bmpdev.calib_param.dig_p1, bmpdev.calib_param.dig_p2, bmpdev.calib_param.dig_p3, bmpdev.calib_param.dig_p4, bmpdev.calib_param.dig_p5
     								, bmpdev.calib_param.dig_p6, bmpdev.calib_param.dig_p7, bmpdev.calib_param.dig_p8, bmpdev.calib_param.dig_p9, bmpdev.calib_param.dig_p10);
+    		//suggested modification
+    		conf.filter = BMP2_FILTER_OFF;
+    		//----------------------------
     		conf.os_mode = BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
     		conf.filter = BMP2_FILTER_COEFF_16;
-    		conf.os_pres = 0; // BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
-    		conf.os_temp = 0; //BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
+    		conf.os_pres = 5; // BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
+    		conf.os_temp = 2; //BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
     		conf.odr = BMP2_ODR_500_MS;
+    		//suggested modification
+    		res = bmp2_set_config(&conf, &bmpdev);
+    		//------------------------------------
     		res = bmp2_set_power_mode(BMP2_POWERMODE_FORCED, &conf, &bmpdev);
     		if(res == BMP2_OK)
     			{
@@ -276,10 +344,10 @@ void register_westaop(void)
 //		vTaskDelay(2000 / portTICK_PERIOD_MS); //wait 2 seconds
 //		}
 // end test for normal mode
-	//res = dht_init();
-	//get_dht_data(&dhtd);
-	westaop_args.op = arg_str1(NULL, NULL, "<dest>", "bmp | dht");
-	westaop_args.dst = arg_str1(NULL, NULL, "<op>", "status | set | read");
+
+
+	westaop_args.dst = arg_str1(NULL, NULL, "<dest>", "bmp | dht");
+	westaop_args.op = arg_str1(NULL, NULL, "<op>", "status | set | read");
 	westaop_args.os_mode = arg_int0(NULL, NULL, "<os_mode>", "over sampling mode");
 	westaop_args.filter = arg_int0(NULL, NULL, "<filter>", "filter coeffs");
 	westaop_args.odr = arg_int0(NULL, NULL, "<odr>", "ouput data rate");
@@ -294,7 +362,7 @@ void register_westaop(void)
 		.argtable = &westaop_args
 		};
 	ESP_ERROR_CHECK(esp_console_cmd_register(&westaop_cmd));
-	if(xTaskCreate(pth_poll, "PTH poll task", 4096, NULL, USER_TASK_PRIORITY, NULL) != pdPASS)
+	if(xTaskCreate(pth_poll, "PTH poll task", 6144, NULL, USER_TASK_PRIORITY, NULL) != pdPASS)
 		ESP_LOGI(TAG, "cannot create PTH poll task");
 	}
 #endif

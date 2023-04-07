@@ -5,8 +5,6 @@
  *      Author: viorel_serbu
  */
 
-/** @pumpop.h */
-
 /**
  * @file pumpop.h
  * @brief header file definitions for control logic of submersible water pump
@@ -57,6 +55,8 @@
 #define LIMITS_FILE				"pump_limits.txt"
  /** Name of the file storing pump status: online | offline */
 #define OPERATIONAL_FILE		"pump_status.txt"
+
+
 
 /**
  * @brief pump command and parameters

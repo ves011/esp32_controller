@@ -12,15 +12,28 @@
 #include "driver/gpio.h"
 #include "driver/rmt.h"
 #include "esp_err.h"
+#include "freertos/freertos.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
+#include "mqtt_ctrl.h"
 #include "dht22.h"
 
 static const char *TAG = "DHT_RMT";
 
 static RingbufHandle_t ringbuf_handle = NULL;
+static SemaphoreHandle_t dhtd_mutex;
 
 int dht_init()
 	{
 	int ret = ESP_FAIL;
+	dhtd_mutex = xSemaphoreCreateMutex();
+	if(!dhtd_mutex)
+		{
+		ESP_LOGE(TAG, "cannot create dhtd_mutex");
+		esp_restart();
+		}
+
 	rmt_config_t rx_config = {
         .rmt_mode      = RMT_MODE_RX,
         .channel       = RMT_CHANNEL_4,  //found somewhere in the docs chn[0..3] are TX and chn[4..7] are RX ?!?
@@ -36,7 +49,7 @@ int dht_init()
     ret = rmt_config(&rx_config);
     if(ret == ESP_OK)
     	{
-    	ret = rmt_driver_install(DHT_RMT_CHANNEL, 800, 0);
+    	ret = rmt_driver_install(DHT_RMT_CHANNEL, 1024, 0);
     	if(ret == ESP_OK)
     		{
     		rmt_set_memory_owner(DHT_RMT_CHANNEL, RMT_MEM_OWNER_RX);
@@ -117,13 +130,13 @@ static int dht_parse(rmt_item32_t *symbol, int n_symbols, dht_data_t * dhtd)
 	 	 csc = (((hum >> 8) & 0xff) + (hum & 0xff) + ((temp >> 8) & 0xff) + (temp & 0xff)) & 0xff;
 	 	 if(csc == cs)
 	 	 	 {
-	 	 	 dhtd->humidity = hum;
-	 	 	 dhtd->temperature = temp;
+	 	 	 dhtd->humidity = hum / 10.;
+	 	 	 dhtd->temperature = temp / 10.;
 	 	 	 ret = ESP_OK;
 	 	 	 }
 	 	 else
 	 	 	 ret = ESP_ERR_INVALID_CRC;
-	 	 ESP_LOGI(TAG, "humidity: %d, temp: %d, check sum: %x, %x", hum, temp, cs, csc);
+	 	 //ESP_LOGI(TAG, "humidity: %d, temp: %d, check sum: %x, %x", hum, temp, cs, csc);
 	 	 }
 	else
 		ret = ESP_FAIL;
@@ -132,32 +145,65 @@ static int dht_parse(rmt_item32_t *symbol, int n_symbols, dht_data_t * dhtd)
 int get_dht_data(dht_data_t * dhtd)
 	{
 	size_t n_symbol = 0;
-	int ret;
-	gpio_set_level(DHT_DATA_PIN, 0);
-	rmt_rx_memory_reset(DHT_RMT_CHANNEL);
-    ret = rmt_rx_start(DHT_RMT_CHANNEL, true);
-    if(ret == ESP_OK)
-    	{
-    	ret = ESP_FAIL;
-    	ets_delay_us(1000);
-    	gpio_set_level(DHT_DATA_PIN, 1);
-    	rmt_item32_t *symbol = (rmt_item32_t *)xRingbufferReceive(ringbuf_handle, &n_symbol, 10);
-    	rmt_rx_stop(DHT_RMT_CHANNEL);
+	int ret = ESP_FAIL;
+	if(xSemaphoreTake(dhtd_mutex, ( TickType_t ) 100 )) // 1 sec wait
+		{
+		gpio_set_level(DHT_DATA_PIN, 0);
+		rmt_rx_memory_reset(DHT_RMT_CHANNEL);
+		ret = rmt_rx_start(DHT_RMT_CHANNEL, true);
+		if(ret == ESP_OK)
+			{
+			ret = ESP_FAIL;
+			ets_delay_us(1000);
+			gpio_set_level(DHT_DATA_PIN, 1);
+			rmt_item32_t *symbol = (rmt_item32_t *)xRingbufferReceive(ringbuf_handle, &n_symbol, 10);
+			rmt_rx_stop(DHT_RMT_CHANNEL);
 
-    	if(symbol && n_symbol)
-    		{
-    		ret = ESP_OK;
-    		n_symbol /= 4;
-    		//ESP_LOGI(TAG, "read %d items   %x  %d", n_symbol, (unsigned int)symbol, ret);
-			//for(int i = 0; i < n_symbol; i++)
-			//	{
-			//	ESP_LOGI(TAG, "%d d0 %d %d", i, symbol[i].duration0, symbol[i].level0);
-			//	ESP_LOGI(TAG, "%d d1 %d %d", i, symbol[i].duration1, symbol[i].level1);
-			//	}
-			ret = dht_parse(symbol, n_symbol, dhtd);
+			if(symbol && n_symbol)
+				{
+				ret = ESP_OK;
+				n_symbol /= 4;
+				ret = dht_parse(symbol, n_symbol, dhtd);
+				char buf[50];
+				ESP_LOGI(TAG, "Temperature = %8.1f", dhtd->temperature);
+				ESP_LOGI(TAG, "Humidity    = %8.1f", dhtd->humidity);
+				sprintf(buf, "DHT\1%.1f\1%.1f", dhtd->temperature, dhtd->humidity);
+				publish_state(buf, 0, 0);
+				}
+			else
+				ret = ESP_ERR_INVALID_SIZE;
+			vRingbufferReturnItem(ringbuf_handle, (void*)symbol);
 			}
-		else
-			ret = ESP_ERR_INVALID_SIZE;
+		xSemaphoreGive(dhtd_mutex);
 		}
+	return ret;
+	}
+int get_dht_status()
+	{
+	size_t n_symbol = 0;
+	int ret = ESP_FAIL;
+	char buf[100];
+	if(xSemaphoreTake(dhtd_mutex, ( TickType_t ) 100 )) // 1 sec wait
+		{
+		gpio_set_level(DHT_DATA_PIN, 0);
+		rmt_rx_memory_reset(DHT_RMT_CHANNEL);
+		ret = rmt_rx_start(DHT_RMT_CHANNEL, true);
+		if(ret == ESP_OK)
+			{
+			ret = ESP_FAIL;
+			ets_delay_us(1000);
+			gpio_set_level(DHT_DATA_PIN, 1);
+			rmt_item32_t *symbol = (rmt_item32_t *)xRingbufferReceive(ringbuf_handle, &n_symbol, 10);
+			rmt_rx_stop(DHT_RMT_CHANNEL);
+
+			if(symbol && n_symbol)
+				ret = ESP_OK;
+			vRingbufferReturnItem(ringbuf_handle, (void*)symbol);
+			}
+		xSemaphoreGive(dhtd_mutex);
+		}
+	sprintf(buf, "DHT\1%d", ret);
+	publish_state(buf, 0, 0);
+
 	return ret;
 	}
