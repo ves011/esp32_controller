@@ -13,7 +13,16 @@
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
 #include "math.h"
+#include "errno.h"
+#include "ctype.h"
+#include "esp_netif.h"
+#include "esp_spi_flash.h"
+#include "esp_spiffs.h"
+#include "esp_vfs_dev.h"
+#include "esp_vfs_fat.h"
+#include "mqtt_client.h"
 #include "common_defines.h"
+#include "external_defs.h"
 #include "mqtt_ctrl.h"
 #include "utils.h"
 #include "bmp2_defs.h"
@@ -25,11 +34,14 @@
 
 static bmp2_dev_t bmpdev;
 static uint8_t osrs_t, osrs_p;
+static int publish_range(char *start_date, char *end_date, int av_points);
 
 static const char *TAG = "WESTA OP";
 static double psl;
 static double hmp;
 static double pnorm;
+
+SemaphoreHandle_t pthfile_mutex;
 
 static int get_bmp_data(bmp_data_t *bmpdata)
 	{
@@ -56,17 +68,40 @@ static int get_bmp_data(bmp_data_t *bmpdata)
 				}
 			}
 		res = bmp2_get_sensor_data(bmpdata, &bmpdev);
+		bmpdata->pressure /= 100.;
 		if(res == BMP2_OK)
 			{
 			char buf[50];
 			ESP_LOGI(TAG, "Temperature = %8.3f", bmpdata->temperature);
-			ESP_LOGI(TAG, "Pressure    = %8.3f", bmpdata->pressure/100.);
+			ESP_LOGI(TAG, "Pressure    = %8.3f", bmpdata->pressure);
 			sprintf(buf, "BMP\1%.3f\1%.3f", bmpdata->temperature, bmpdata->pressure);
 			publish_state(buf, 0, 0);
 			}
 		}
 	return res;
 	}
+/*
+static int get_bmp_data(bmp_data_t *bmpdata)
+	{
+	int res = BMP2_E_COM_FAIL;
+	struct bmp2_status bmps;
+	while((res = bmp2_get_status(&bmps, &bmpdev) == BMP2_OK) && bmps.measuring == 1)
+		{
+		vTaskDelay(pdMS_TO_TICKS(10));
+		ESP_LOGI(TAG, "bmp280 busy");
+		}
+	res = bmp2_get_sensor_data(bmpdata, &bmpdev);
+	if(res == BMP2_OK)
+		{
+		char buf[50];
+		ESP_LOGI(TAG, "Temperature = %8.3f", bmpdata->temperature);
+		ESP_LOGI(TAG, "Pressure    = %8.3f", bmpdata->pressure);
+		//sprintf(buf, "BMP\1%.3f\1%.3f", bmpdata->temperature, bmpdata->pressure);
+		//publish_state(buf, 0, 0);
+		}
+	return res;
+	}
+*/
 static void get_bmp_status(void)
 	{
 	int res;
@@ -85,11 +120,16 @@ static void get_bmp_status(void)
 			}
 		}
 	}
-
+/*
+ * @brief wrapper function required by Bosch API.
+ */
 static void my_usleep(uint32_t period, void *intf_ptr)
 	{
 	usleep(period);
 	}
+/*
+ * @brief wrapper function required by Bosch API.
+ */
 static BMP2_INTF_RET_TYPE bmp280_read(uint8_t reg_addr, uint8_t *reg_data, uint32_t length, void *intf_ptr)
 	{
 	int ret = i2c_master_write_read_device(I2C_MASTER_NUM, BMP280_I2C_ADDRESS, &reg_addr, 1, reg_data, length, I2C_MASTER_TIMEOUT_MS / portTICK_RATE_MS);
@@ -99,6 +139,9 @@ static BMP2_INTF_RET_TYPE bmp280_read(uint8_t reg_addr, uint8_t *reg_data, uint3
 		ret = BMP2_E_COM_FAIL;
 	return ret;
 	}
+/*
+ * @brief wrapper function required by Bosch API.
+ */
 static BMP2_INTF_RET_TYPE bmp280_write(uint8_t reg_addr, const uint8_t *reg_data, uint32_t length, void *intf_ptr)
 	{
 	uint8_t *wr_buf = calloc(length + 1, 1);
@@ -241,6 +284,34 @@ int do_westaop(int argc, char **argv)
     		ESP_LOGI(TAG, "DHT status: %d", res);
     		}
     	}
+    else if(!strcmp(westaop_args.dst->sval[0], "range"))
+    	{
+    	char start_date[32], end_date[32], *b;
+   		int i = 0, k = 0;;
+   		b = start_date;
+   		start_date[0] = end_date[0] = 0;
+   		while(i < strlen(westaop_args.op->sval[0]))
+   			{
+   			if(westaop_args.op->sval[0][i] != '>')
+   				b[k] = westaop_args.op->sval[0][i];
+   			else
+   				{
+   				b[k] = 0;
+   				b = end_date;
+   				k = -1;
+   				}
+   			i++;
+   			k++;
+    		}
+    	b[k] = 0;
+    	if(westaop_args.os_mode->count)
+    		i = westaop_args.os_mode->ival[0];
+    	else
+    		i = 1;
+    	ESP_LOGI(TAG, "start %s", start_date);
+    	ESP_LOGI(TAG, "start %s", end_date);
+    	publish_range(start_date, end_date, i);
+    	}
     else
     	{
     	ESP_LOGI(TAG, "Unknown operand: %s", westaop_args.dst->sval[0]);
@@ -253,14 +324,26 @@ static void pth_poll()
 	bmp_data_t bmpdata;
 	dht_data_t dhtdata;
 	int res;
+	uint32_t poll_int = (PTH_POLL_INT * portTICK_PERIOD_MS) / 1000;
 	char bufb[100], bufd[100];
+	TickType_t  tdelta;
 	res = dht_init();
 	pnorm = psl * pow((1 - hmp/44330), 5.255);
+	// get the first measurement when time%PTH_POLL_INT = 0
+	// and after tsync = 1 by ntp_sync
 	while(1)
 		{
+		time_t tm = time(NULL);
+		if(tm % poll_int == 0 && tsync)
+			break;
+		vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec
+		}
+	while(1)
+		{
+		tdelta = xTaskGetTickCount();
 		res = get_bmp_data(&bmpdata);
 		if(res == BMP2_OK)
-			sprintf(bufb, "%.3lf %.3lf %3lf", bmpdata.temperature, bmpdata.pressure, pnorm);
+			sprintf(bufb, "%.3lf %.3lf %.3lf", bmpdata.temperature, bmpdata.pressure, pnorm);
 		else
 			strcpy(bufb, "0.0 0.0 0.0");
 
@@ -271,11 +354,92 @@ static void pth_poll()
 			strcpy(bufd, " 0.0 0.0");
 
 		strcat(bufb, bufd);
-		rw_tpdata(PARAM_WRITE, bufb);
+		write_tpdata(PARAM_WRITE, bufb);
 		sprintf(bufb, "BMPDHT\1%.3lf\1%.3lf\1%.3lf\1%.1lf\1%.1lf", bmpdata.temperature, bmpdata.pressure, pnorm, dhtdata.humidity, dhtdata.temperature);
 		publish_monitor(bufb, 0, 0);
-		vTaskDelay(PTH_POLL_INT);
+		// tdelta is used to avoid time drift because of long read operation
+		// wo tdelta the drift is almost 100msec per cycle
+		tdelta = xTaskGetTickCount() - tdelta;
+		vTaskDelay(PTH_POLL_INT - tdelta);
 		}
+	}
+static int publish_range(char *start_date, char *end_date, int av_points)
+	{
+	int syear = 0, smonth = 0, sday = 0, shour = 0, smin = 0, ssec = 0;
+	int eyear = 0, emonth = 0, eday = 0, ehour = 0, emin = 0, esec = 0;
+	char file_name[80], bread[128], bdate[80], bval[128], bdateval[80];
+	double atb = 0, atd = 0, ahd = 0, apb = 0;
+	double pb, tb, pn, hd, td;
+	int k = 0, nval = 0;
+	FILE *f;
+	int ret = ESP_FAIL, i = 0;;
+	//2023-04-09/09:09:21 23.137 101199.138 77.488641 45.0 22.6
+	sscanf(start_date, "%d-%d-%d/%d:%d:%d", &syear, &smonth, &sday, &shour, &smin, &ssec);
+	sscanf(end_date, "%d-%d-%d/%d:%d:%d", &eyear, &emonth, &eday, &ehour, &emin, &esec);
+	sprintf(file_name, "%s/%d.tph", BASE_PATH, syear);
+	ESP_LOGI(TAG, "%d %d %d %d %d %d", syear, smonth, sday, shour, smin, ssec);
+	ESP_LOGI(TAG, "%d %d %d %d %d %d", eyear, emonth, eday, ehour, emin, esec);
+	ESP_LOGI(TAG, "%s", file_name);
+	if(xSemaphoreTake(pthfile_mutex, ( TickType_t ) 100 )) // 1 sec wait
+		{
+		f = fopen(file_name, "r");
+		if(f)
+			{
+			while(!feof(f))
+				{
+				if(fgets(bread , sizeof(bread), f))
+					{
+					strncpy(bdate, bread, 19);
+					bdate[19] = 0;
+					if(strcmp(bdate, start_date) >= 0)
+						{
+						strcpy(bval, bread + 20);
+						tb = pb = pn = hd = td = 0;
+						sscanf(bval, "%lf %lf %lf %lf %lf", &tb, &pb, &pn, &hd, &td);
+						if(k == 0)
+							{
+							atb = 0; atd = 0; ahd = 0; apb = 0;
+							}
+						if(k == av_points / 2)
+							{
+							strcpy(bdateval, bdate);
+							}
+						atb += tb; atd += td; ahd += hd; apb += pb;
+						k++;
+						if(k == av_points)
+							{
+							atb /= k; atd /= k; ahd /= k; apb /= k;
+							k = 0;
+							sprintf(bread, "%s %.3lf %.3lf %.3lf %.3lf %.3lf", bdateval, atb, apb, pn, ahd, atd);
+							//ESP_LOGI(TAG, "%s", bread);
+							publish_state(bread, 0, 0);
+							nval++;
+							}
+
+						if(strlen(end_date) && strcmp(bdate, end_date) >= 0)
+							break;
+						//ESP_LOGI(TAG, "%s", bread);
+						//publish_state(bread, 0, 0);
+						i++;
+						}
+					}
+				}
+			fclose(f);
+			ret =  ESP_OK;
+			}
+		else
+			{
+			ESP_LOGI(TAG, "Cannot open %s for reading. errno = %d", file_name, errno);
+			ret = ESP_FAIL;
+			}
+		xSemaphoreGive(pthfile_mutex);
+		}
+	else
+		ret = ESP_FAIL;
+	sprintf(bread, "%d %d", i, nval);
+	publish_state(bread, 0, 0);
+	ESP_LOGI(TAG, "range: %d lines / n values: %d", i, nval);
+	return ret;
 	}
 void register_westaop(void)
 	{
@@ -287,6 +451,12 @@ void register_westaop(void)
 	bmpdev.write = bmp280_write;
 	bmpdev.intf_ptr = NULL;
 	pnorm_param_t param = {0, 0};
+	pthfile_mutex = xSemaphoreCreateMutex();
+	if(!pthfile_mutex)
+		{
+		ESP_LOGE(TAG, "cannot create pthfile_mutex");
+		esp_restart();
+		}
 	if(rw_params(PARAM_READ, PARAM_PNORM, &param) == ESP_OK)
 		{
 		psl = param.psl;

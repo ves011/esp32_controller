@@ -23,7 +23,8 @@
  /** address of BMP280 device */
 #define BMP280_I2C_ADDRESS			0x76
  /** reading interval of pressure temp and humidity */
-#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS //30 mins
+#define PTH_POLL_INT				10000 / portTICK_PERIOD_MS
+//#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS //30 mins
  /** default normal sea level pressure */
 #define DEFAULT_PSL					1013.25
  /** default measuring point elevationA */
@@ -49,7 +50,20 @@ typedef struct
 	double hmp;
 	} pnorm_param_t;
 
+extern SemaphoreHandle_t pthfile_mutex;
+
 void register_westaop(void);
+/*
+ * @brief command line function called by console_repl or MQTT client.
+ *    westa bmp read|state|set|pset -> ops addressed to BMP280 sensor
+ *    westa dht read -> op addressed to DHT22 sensor
+ *    westa range <[start_date]>[end_date]> <average_points>
+ *        date format is yyyy-mm-dd/hh:mm:ss
+ *        no spaces are allowed within parameters
+ *        date to by filled from left to right; missing part will take 0 value
+ *        <average_points> provides the average value for given number of points
+ *           value is reported for the middle of the interval
+ */
 int do_westaop(int argc, char **argv);
 
 #endif /* WESTA_OP_WESTAOP_H_ */
