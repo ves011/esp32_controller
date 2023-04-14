@@ -2,6 +2,7 @@ idf_component_register	(
 SRCS 					"main.c"
 						"../../esp32_common/tcp/ntp_sync.c"
 						"../../esp32_common/utils/utils.c"
+						"../../esp32_common/utils/ota.c"
 						"../../esp32_common/cmds/cmd_wifi.c"
 						"../../esp32_common/cmds/cmd_system.c"
 						"../../esp32_common/tcp/mqtt_ctrl.c"

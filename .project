@@ -1963,6 +1963,11 @@
 			<location>D:/dev/esp32/esp32_common/tcp/tcp_log.c</location>
 		</link>
 		<link>
+			<name>build/ide/esp_idf_components/mon/utils/ota.c</name>
+			<type>1</type>
+			<location>D:/dev/esp32/esp32_common/utils/ota.c</location>
+		</link>
+		<link>
 			<name>build/ide/esp_idf_components/mon/utils/utils.c</name>
 			<type>1</type>
 			<location>D:/dev/esp32/esp32_common/utils/utils.c</location>

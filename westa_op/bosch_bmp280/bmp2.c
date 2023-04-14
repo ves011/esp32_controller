@@ -466,8 +466,19 @@ int8_t bmp2_get_power_mode(uint8_t *mode, struct bmp2_dev *dev)
  */
 int8_t bmp2_set_power_mode(uint8_t mode, const struct bmp2_config *conf, struct bmp2_dev *dev)
 {
-    int8_t rslt;
+    int8_t rslt = BMP2_OK;
+    /*
+    uint8_t reg_data[1];
+    uint8_t reg_add[1];
 
+    reg_add[0] = 0xf4;
+    reg_data[0] = (conf->os_temp << 5) | (conf->os_pres << 2) | mode;
+    bmp2_set_regs(reg_add, reg_data, 1, dev);
+
+    reg_add[0] = 0xf5;
+    reg_data[0] = (conf->odr << 5) | (conf->filter << 2) | conf->spi3w_en;
+    bmp2_set_regs(reg_add, reg_data, 1, dev);
+    */
     rslt = conf_sensor(mode, conf, dev);
 
     return rslt;
@@ -667,7 +678,7 @@ static int8_t conf_sensor(uint8_t mode, const struct bmp2_config *conf, struct b
              * within the shortest period of time
              */
             rslt = bmp2_soft_reset(dev);
-
+            dev->delay_us(2000, NULL);
             if (rslt == BMP2_OK)
             {
                 set_os_mode(temp, conf);

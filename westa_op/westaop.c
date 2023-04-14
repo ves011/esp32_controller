@@ -34,7 +34,7 @@
 
 static bmp2_dev_t bmpdev;
 static uint8_t osrs_t, osrs_p;
-static int publish_range(char *start_date, char *end_date, int av_points);
+static int publish_range(char *start_date, char *end_date, int nvals, int av_points);
 
 static const char *TAG = "WESTA OP";
 static double psl;
@@ -287,18 +287,30 @@ int do_westaop(int argc, char **argv)
     else if(!strcmp(westaop_args.dst->sval[0], "range"))
     	{
     	char start_date[32], end_date[32], *b;
-   		int i = 0, k = 0;;
+   		int i = 0, k = 0, nvals = 0;
    		b = start_date;
    		start_date[0] = end_date[0] = 0;
+   		if(strstr(westaop_args.op->sval[0], ">#"))
+   			nvals = 1;
+
    		while(i < strlen(westaop_args.op->sval[0]))
    			{
    			if(westaop_args.op->sval[0][i] != '>')
    				b[k] = westaop_args.op->sval[0][i];
    			else
    				{
-   				b[k] = 0;
-   				b = end_date;
-   				k = -1;
+   				if(nvals)
+   					{
+   					i += 2;
+   					nvals = atoi(westaop_args.op->sval[0] + i);
+   					break;
+   					}
+   				else
+   					{
+					b[k] = 0;
+					b = end_date;
+					k = -1;
+					}
    				}
    			i++;
    			k++;
@@ -310,7 +322,8 @@ int do_westaop(int argc, char **argv)
     		i = 1;
     	ESP_LOGI(TAG, "start %s", start_date);
     	ESP_LOGI(TAG, "start %s", end_date);
-    	publish_range(start_date, end_date, i);
+    	ESP_LOGI(TAG, "n vals %d", nvals);
+    	publish_range(start_date, end_date, nvals, i);
     	}
     else
     	{
@@ -363,7 +376,7 @@ static void pth_poll()
 		vTaskDelay(PTH_POLL_INT - tdelta);
 		}
 	}
-static int publish_range(char *start_date, char *end_date, int av_points)
+static int publish_range(char *start_date, char *end_date, int nvals, int av_points)
 	{
 	int syear = 0, smonth = 0, sday = 0, shour = 0, smin = 0, ssec = 0;
 	int eyear = 0, emonth = 0, eday = 0, ehour = 0, emin = 0, esec = 0;
@@ -374,8 +387,8 @@ static int publish_range(char *start_date, char *end_date, int av_points)
 	FILE *f;
 	int ret = ESP_FAIL, i = 0;;
 	//2023-04-09/09:09:21 23.137 101199.138 77.488641 45.0 22.6
-	sscanf(start_date, "%d-%d-%d/%d:%d:%d", &syear, &smonth, &sday, &shour, &smin, &ssec);
-	sscanf(end_date, "%d-%d-%d/%d:%d:%d", &eyear, &emonth, &eday, &ehour, &emin, &esec);
+	sscanf(start_date, "%d-%d-%dT%d:%d:%d", &syear, &smonth, &sday, &shour, &smin, &ssec);
+	sscanf(end_date, "%d-%d-%dT%d:%d:%d", &eyear, &emonth, &eday, &ehour, &emin, &esec);
 	sprintf(file_name, "%s/%d.tph", BASE_PATH, syear);
 	ESP_LOGI(TAG, "%d %d %d %d %d %d", syear, smonth, sday, shour, smin, ssec);
 	ESP_LOGI(TAG, "%d %d %d %d %d %d", eyear, emonth, eday, ehour, emin, esec);
@@ -410,14 +423,21 @@ static int publish_range(char *start_date, char *end_date, int av_points)
 							{
 							atb /= k; atd /= k; ahd /= k; apb /= k;
 							k = 0;
-							sprintf(bread, "%s %.3lf %.3lf %.3lf %.3lf %.3lf", bdateval, atb, apb, pn, ahd, atd);
+							sprintf(bread, "WR %s %.3lf %.3lf %.3lf %.3lf %.3lf", bdateval, atb, apb, pn, ahd, atd);
 							//ESP_LOGI(TAG, "%s", bread);
 							publish_state(bread, 0, 0);
 							nval++;
 							}
-
-						if(strlen(end_date) && strcmp(bdate, end_date) >= 0)
-							break;
+						if(nvals > 0)
+							{
+							if(i >= nvals)
+								break;
+							}
+						else
+							{
+							if(strlen(end_date) && strcmp(bdate, end_date) >= 0)
+								break;
+							}
 						//ESP_LOGI(TAG, "%s", bread);
 						//publish_state(bread, 0, 0);
 						i++;
@@ -436,7 +456,7 @@ static int publish_range(char *start_date, char *end_date, int av_points)
 		}
 	else
 		ret = ESP_FAIL;
-	sprintf(bread, "%d %d", i, nval);
+	sprintf(bread, "WRS %d %d", i, nval);
 	publish_state(bread, 0, 0);
 	ESP_LOGI(TAG, "range: %d lines / n values: %d", i, nval);
 	return ret;
@@ -473,24 +493,20 @@ void register_westaop(void)
 	if(res == BMP2_OK)
 		{
     	res = bmp2_get_config(&conf, &bmpdev);
+    	res = bmp2_get_power_mode(&pmode, &bmpdev);
     	if(res == BMP2_OK)
     		{
-    		ESP_LOGI(TAG, "bmp280 chip ID: %0x %0x %0x %0x %0x %0x %0x", bmpdev.chip_id, conf.filter, conf.odr, conf.os_mode, conf.os_pres, conf.os_temp, conf.spi3w_en);
+    		ESP_LOGI(TAG, "bmp280 chip ID: %0x \n%0x %0x %0x %0x %0x %0x\nPower mode = %d",
+    					bmpdev.chip_id, conf.filter, conf.odr, conf.os_mode, conf.os_pres, conf.os_temp, conf.spi3w_en, bmpdev.power_mode);
     		ESP_LOGI(TAG, "bmp280 cal param: %6d %6d \n%6d %6d %6d %6d %6d\n%6d %6d %6d %6d %6d", bmpdev.calib_param.dig_t1, bmpdev.calib_param.dig_t2
     								, bmpdev.calib_param.dig_p1, bmpdev.calib_param.dig_p2, bmpdev.calib_param.dig_p3, bmpdev.calib_param.dig_p4, bmpdev.calib_param.dig_p5
     								, bmpdev.calib_param.dig_p6, bmpdev.calib_param.dig_p7, bmpdev.calib_param.dig_p8, bmpdev.calib_param.dig_p9, bmpdev.calib_param.dig_p10);
-    		//suggested modification
-    		conf.filter = BMP2_FILTER_OFF;
-    		//----------------------------
     		conf.os_mode = BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
     		conf.filter = BMP2_FILTER_COEFF_16;
     		conf.os_pres = 5; // BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
     		conf.os_temp = 2; //BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
     		conf.odr = BMP2_ODR_500_MS;
-    		//suggested modification
-    		res = bmp2_set_config(&conf, &bmpdev);
-    		//------------------------------------
-    		res = bmp2_set_power_mode(BMP2_POWERMODE_FORCED, &conf, &bmpdev);
+    		res = bmp2_set_power_mode(BMP2_POWERMODE_NORMAL, &conf, &bmpdev);
     		if(res == BMP2_OK)
     			{
 				res = bmp2_get_config(&conf, &bmpdev);

@@ -23,8 +23,8 @@
  /** address of BMP280 device */
 #define BMP280_I2C_ADDRESS			0x76
  /** reading interval of pressure temp and humidity */
-#define PTH_POLL_INT				10000 / portTICK_PERIOD_MS
-//#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS //30 mins
+//#define PTH_POLL_INT				10000 / portTICK_PERIOD_MS
+#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS //30 mins
  /** default normal sea level pressure */
 #define DEFAULT_PSL					1013.25
  /** default measuring point elevationA */
