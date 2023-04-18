@@ -47,7 +47,7 @@
 
 #define TAG "ctrl_dev"
 #define PROMPT_STR "CTRLDEV"
-#define CONFIG_STORE_HISTORY 1
+#define CONFIG_STORE_HISTORY 0
 #define CONFIG_CONSOLE_MAX_COMMAND_LINE_LENGTH	1024
 
 #include "wifi_credentials.h"
@@ -56,6 +56,7 @@ TaskHandle_t ntp_sync_task_handle;
 
 int console_state;
 int restart_in_progress;
+int controller_op_registered;
 
 esp_vfs_spiffs_conf_t conf_spiffs =
 	{
@@ -153,13 +154,14 @@ void app_main(void)
         esp_restart();
 		}
 	initialize_nvs();
+	controller_op_registered = 0;
 	rw_params(PARAM_READ, PARAM_CONSOLE, &console_state);
 	wifi_join(DEFAULT_SSID, DEFAULT_PASS, JOIN_TIMEOUT_MS);
 	esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
-	if(mqtt_start() == ESP_OK)
-		register_mqtt();
 	tcp_log_init();
 	esp_log_set_vprintf(my_log_vprintf);
+	if(mqtt_start() == ESP_OK)
+		register_mqtt();
 #ifdef WITH_CONSOLE
 	esp_console_repl_t *repl = NULL;
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
@@ -195,6 +197,7 @@ void app_main(void)
 #elif ACTIVE_CONTROLLER == WESTA_CONTROLLER
 	register_westaop();
 #endif
+	controller_op_registered = 1;
 
 #ifdef WITH_CONSOLE
 #if defined(CONFIG_ESP_CONSOLE_UART_DEFAULT) || defined(CONFIG_ESP_CONSOLE_UART_CUSTOM)
