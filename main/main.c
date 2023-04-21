@@ -160,6 +160,9 @@ void app_main(void)
 	esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 	tcp_log_init();
 	esp_log_set_vprintf(my_log_vprintf);
+
+	xTaskCreate(ntp_sync, "NTP_sync_task", 6134, NULL, USER_TASK_PRIORITY, &ntp_sync_task_handle);
+
 	if(mqtt_start() == ESP_OK)
 		register_mqtt();
 #ifdef WITH_CONSOLE
@@ -188,7 +191,7 @@ void app_main(void)
 	register_system();
 	register_wifi();
 
-	xTaskCreate(ntp_sync, "NTP_sync_task", 4096, NULL, USER_TASK_PRIORITY, &ntp_sync_task_handle);
+
 
 #if ACTIVE_CONTROLLER == AGATE_CONTROLLER
 	register_gateop();

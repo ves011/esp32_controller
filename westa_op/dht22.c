@@ -166,7 +166,7 @@ int get_dht_data(dht_data_t * dhtd)
 				ret = dht_parse(symbol, n_symbol, dhtd);
 				char buf[50];
 				ESP_LOGI(TAG, "Temperature = %8.1f", dhtd->temperature);
-				ESP_LOGI(TAG, "Humidity    = %8.1f", dhtd->humidity);
+				ESP_LOGI(TAG, "Humidity    = %8.1f (%d)", dhtd->humidity, ret);
 				sprintf(buf, "DHT\1%.1f\1%.1f", dhtd->temperature, dhtd->humidity);
 				publish_state(buf, 0, 0);
 				}
