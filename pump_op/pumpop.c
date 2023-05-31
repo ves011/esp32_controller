@@ -36,8 +36,9 @@
 
 #if ACTIVE_CONTROLLER == PUMP_CONTROLLER
 static SemaphoreHandle_t pumpop_mutex;
+static SemaphoreHandle_t pumpval_mutex;
 
-static int pump_state, pump_status, pump_pressure_kpa, pump_current, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, psensor_mv;
+static volatile int pump_state, pump_status, pump_pressure_kpa, pump_current, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, psensor_mv;
 static TaskHandle_t pump_task_handle, gpio_pump_cmd_handle;
 
 int pump_pres_stdev;
@@ -173,13 +174,15 @@ int get_pump_state(void)
 	minmax_t min[10] = {0}, max[10] = {0};
     pump_limits_t plimits;
     psensor_offset_t offset;
-    int ps;
+    int ps, pdsem = 0;
     char msg[80];
-    pump_status = kpa0_offset = pump_min_lim = pump_max_lim = pump_current_limit = -1;
-    overp_time_limit = 10;
     if(rw_params(PARAM_READ, PARAM_V_OFFSET, &offset) == ESP_OK)
     	{
     	kpa0_offset = offset.v_offset;
+    	}
+    else
+    	{
+    	kpa0_offset = 0;
     	}
    	if(rw_params(PARAM_READ, PARAM_LIMITS, &plimits) == ESP_OK)
     	{
@@ -189,13 +192,23 @@ int get_pump_state(void)
 		pump_pres_stdev = plimits.stdev;
 		overp_time_limit = plimits.overp_lim;
 		}
+	else
+		{
+		pump_min_lim = DEFAULT_PRES_MIN_LIMIT;
+		pump_max_lim = DEFAULT_PRES_MAX_LIMIT;
+		pump_current_limit = DEFAULT_PUMP_CURRENT_LIMIT;
+		pump_pres_stdev = DEFAULT_STDEV;
+		overp_time_limit = DEFAULT_OVERP_TIME_LIMIT;
+		}
 	if(rw_params(PARAM_READ, PARAM_OPERATIONAL, &ps) == ESP_OK)
 		pump_status = ps;
 	if(!pump_task_handle)
 		{
-		if(get_pump_adc_values(min, max, &psensor_mv) ==ESP_OK)
+		int local_ps_mv;
+		if(get_pump_adc_values(min, max, &local_ps_mv) ==ESP_OK)
 			{
-			pump_pressure_kpa = ((psensor_mv - kpa0_offset) * 400) / 1000;
+			psensor_mv = local_ps_mv;
+			pump_pressure_kpa = ((psensor_mv - kpa0_offset) * 250) / 1000;
 			if(pump_pressure_kpa < 0)
 				pump_pressure_kpa = 0;
 			process_adc_current(min, max);
@@ -206,21 +219,30 @@ int get_pump_state(void)
 			psensor_mv = -1;
 			pump_current = -1;
 			}
-		}
-	char opstate[20];
-	if(pump_status == PUMP_ONLINE)
-		{
-		strcpy(opstate, "ONLINE");
-		gpio_set_level(PUMP_ONLINE_LED, PIN_ON);
-		}
-	else if(pump_status == PUMP_OFFLINE)
-		{
-		strcpy(opstate, "OFFLINE");
-		gpio_set_level(PUMP_ONLINE_LED, PIN_OFF);
+		pdsem = 1;
 		}
 	else
-		strcpy(opstate, "UNKNOWN");
-	ESP_LOGI(TAG, "\n \
+		{
+		//just wait pump mon task to compute the values
+		if(xSemaphoreTake(pumpval_mutex, ( TickType_t ) 100 )) // 1 sec wait
+			pdsem = 2;
+		}
+	if(pdsem)
+		{
+		char opstate[20];
+		if(pump_status == PUMP_ONLINE)
+			{
+			strcpy(opstate, "ONLINE");
+			gpio_set_level(PUMP_ONLINE_LED, PIN_ON);
+			}
+		else if(pump_status == PUMP_OFFLINE)
+			{
+			strcpy(opstate, "OFFLINE");
+			gpio_set_level(PUMP_ONLINE_LED, PIN_OFF);
+			}
+		else
+			strcpy(opstate, "UNKNOWN");
+		ESP_LOGI(TAG, "\n \
 running state\t\t= %5d\n \
 Operational state\t\t= %s\n \
 pressure (kPa/mV)        = %5d/%5d\n \
@@ -233,10 +255,16 @@ fault current limit (mA) = %5d\n \
 current (mA)             = %5d\n \
 max STDEV				 = %5d\n \
 timeout P max (sec)		 = %5d\n",
-		pump_state, opstate, pump_pressure_kpa, psensor_mv, stdev_c, stdev_p, pump_min_lim, pump_max_lim, pump_current_limit, kpa0_offset, pump_current, pump_pres_stdev, overp_time_limit);
-	sprintf(msg, "%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d",
-		pump_state, pump_status, pump_current, pump_pressure_kpa, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, pump_pres_stdev, overp_time_limit, stdev_c, stdev_p);
-	publish_state(msg, 0, 0);
+			pump_state, opstate, pump_pressure_kpa, psensor_mv, stdev_c, stdev_p, pump_min_lim, pump_max_lim, pump_current_limit, kpa0_offset, pump_current, pump_pres_stdev, overp_time_limit);
+		sprintf(msg, "%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d",
+			pump_state, pump_status, pump_current, pump_pressure_kpa, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, pump_pres_stdev, overp_time_limit, stdev_c, stdev_p);
+		}
+	else
+		ESP_LOGI(TAG, "pdsem = %d", pdsem);
+	if(pdsem == 2)
+		xSemaphoreGive(pumpval_mutex);
+	if(pdsem)
+		publish_state(msg, 0, 0);
     return ret;
     }
 
@@ -253,10 +281,12 @@ int start_pump(int from)
     	{
 		gpio_set_level(PUMP_ONOFF_PIN, PIN_ON);
 		vTaskDelay(500 / portTICK_PERIOD_MS);
-		if(get_pump_adc_values(min, max, &psensor_mv) == ESP_OK)
+		int local_ps_mv;
+		if(get_pump_adc_values(min, max, &local_ps_mv) == ESP_OK)
 			{
+			psensor_mv = local_ps_mv;
 			process_adc_current(min, max);
-			if(pump_current > 100 && pump_current <= pump_current_limit)
+			if(pump_current > PUMP_CURRENT_OFF && pump_current <= pump_current_limit)
 				{
 				pump_pressure_kpa = ((psensor_mv - kpa0_offset) * 250) / 1000;
 				gpio_set_level(PUMP_ONOFF_LED, PIN_ON);
@@ -276,7 +306,8 @@ int start_pump(int from)
 				//if(pump_task_handle)
 				//	vTaskDelete(pump_task_handle);
 				//pump_task_handle = NULL;
-				rw_params(PARAM_WRITE, PARAM_OPERATIONAL, &pump_status);
+				int local_ps = pump_status;
+				rw_params(PARAM_WRITE, PARAM_OPERATIONAL, &local_ps);
 				ret = ESP_OK;
 				}
 			else
@@ -284,7 +315,7 @@ int start_pump(int from)
 				ESP_LOGI(TAG, "Pump doesn't start");
 				gpio_set_level(PUMP_ONOFF_PIN, PUMP_OFF);
 				gpio_set_level(PUMP_ONOFF_LED, PIN_OFF);
-				gpio_set_level(PUMP_FAULT_LED, PIN_OFF);
+				gpio_set_level(PUMP_FAULT_LED, PIN_ON);
 				pump_state = PUMP_FAULT;
 				ret = ESP_OK;
 				}
@@ -306,11 +337,14 @@ int stop_pump(int from)
     else
     	{
 		gpio_set_level(PUMP_ONOFF_PIN, PUMP_OFF);
-		if(get_pump_adc_values(min, max, &psensor_mv) == ESP_OK)
+		vTaskDelay(500 / portTICK_PERIOD_MS);
+		int local_ps_mv;
+		if(get_pump_adc_values(min, max, &local_ps_mv) == ESP_OK)
 			{
+			psensor_mv = local_ps_mv;
 			pump_pressure_kpa = ((psensor_mv - kpa0_offset) * 250) / 1000;
 			process_adc_current(min, max);
-			if(pump_current < 100)
+			if(pump_current < PUMP_CURRENT_OFF)
 				{
 				pump_state = PUMP_OFF;
 				gpio_set_level(PUMP_ONOFF_LED, PIN_OFF);
@@ -364,7 +398,8 @@ int pump_operational(int po)
 			ret = ESP_FAIL;
 		if(ret == ESP_OK) // update status in pump_status.txt
 			{
-			ret = rw_params(PARAM_WRITE, PARAM_OPERATIONAL, &pump_status);
+			int local_ps = pump_status;
+			ret = rw_params(PARAM_WRITE, PARAM_OPERATIONAL, &local_ps);
 			if(ret != ESP_OK)
 				{
 				ESP_LOGI(TAG, "Operational status could not be updated: current value: %d", pump_status);
@@ -383,9 +418,11 @@ int set_pump_0_offset()
 
 	//printf("\nSet 0 offset for pressure sensor");
 	//printf("\nSensor should be already at 0 kPa pressure\n");
-	ret = get_pump_adc_values(min, max, &psensor_mv);
+	int local_ps_mv;
+	ret = get_pump_adc_values(min, max, &local_ps_mv);
     if(ret == ESP_OK)
     	{
+    	psensor_mv = local_ps_mv;
     	ESP_LOGI(TAG, " %d /", psensor_mv);
     	v_offset.v_offset = 0;
 		ret = rw_params(PARAM_READ, PARAM_V_OFFSET, &v_offset);
@@ -518,6 +555,12 @@ void register_pumpop()
 		ESP_LOGE(TAG, "cannot create pumpop_mutex");
 		esp_restart();
 		}
+	pumpval_mutex = xSemaphoreCreateMutex();
+	if(!pumpval_mutex)
+		{
+		ESP_LOGE(TAG, "cannot create pumpval_mutex");
+		esp_restart();
+		}
 
 
 	pumpop_args.op = arg_str1(NULL, NULL, "<op>", "type of operation: start | stop | offline | online | set0 --> set 0 kPa sensor offset | set_limits --> set the interval pump is running ");
@@ -574,85 +617,93 @@ void pump_mon_task(void *pvParameters)
 		{
 		memset(min, 0, sizeof(min));
 		memset(max, 0, sizeof(max));
-		if(get_pump_adc_values(min, max, &psensor_mv) == ESP_OK)
+		if(xSemaphoreTake(pumpval_mutex, ( TickType_t ) 100 )) // 1 sec wait
 			{
-			pump_pressure_kpa = ((psensor_mv - kpa0_offset) * 250) / 1000;
-			if(pump_pressure_kpa < 0)
-				pump_pressure_kpa = 0;
-			process_adc_current(min, max);
-			if(pump_current > pump_current_limit)
+			int local_ps_mv;
+			if(get_pump_adc_values(min, max, &local_ps_mv) == ESP_OK)
 				{
-				pump_status = PUMP_OFFLINE;
-				stop_pump(1);
-				pump_state = PUMP_FAULT;
-				gpio_set_level(PUMP_FAULT_LED, PIN_ON);
-				gpio_set_level(PUMP_ONLINE_LED, PIN_OFF);
-				rw_params(PARAM_WRITE, PARAM_OPERATIONAL, &pump_status);
-				}
-			else
-				{
-				gpio_set_level(PUMP_FAULT_LED, PIN_OFF);
-				if(pump_current > 100)
+				psensor_mv = local_ps_mv;
+				pump_pressure_kpa = ((psensor_mv - kpa0_offset) * 250) / 1000;
+				if(pump_pressure_kpa < 0)
+					pump_pressure_kpa = 0;
+				process_adc_current(min, max);
+				if(pump_current > pump_current_limit)
 					{
-					gpio_set_level(PUMP_ONOFF_LED, PIN_ON);
-					pump_state = PUMP_ON;
+					pump_status = PUMP_OFFLINE;
+					stop_pump(1);
+					pump_state = PUMP_FAULT;
+					gpio_set_level(PUMP_FAULT_LED, PIN_ON);
+					gpio_set_level(PUMP_ONLINE_LED, PIN_OFF);
+					int local_ps = pump_status;
+					rw_params(PARAM_WRITE, PARAM_OPERATIONAL, &local_ps);
 					}
 				else
 					{
-					gpio_set_level(PUMP_ONOFF_LED, PIN_OFF);
-					if(pump_state != PUMP_FAULT)
-						pump_state = PUMP_OFF;
-					}
-				if(pump_status == PUMP_ONLINE)
-					{
-					if(xSemaphoreTake(pumpop_mutex, ( TickType_t ) 100 )) // 1 sec wait
+					gpio_set_level(PUMP_FAULT_LED, PIN_OFF);
+					if(pump_current > PUMP_CURRENT_OFF)
 						{
-						if(pump_pressure_kpa > pump_max_lim)
+						gpio_set_level(PUMP_ONOFF_LED, PIN_ON);
+						pump_state = PUMP_ON;
+						}
+					else
+						{
+						gpio_set_level(PUMP_ONOFF_LED, PIN_OFF);
+						if(pump_state != PUMP_FAULT)
+							pump_state = PUMP_OFF;
+						}
+					if(pump_status == PUMP_ONLINE)
+						{
+						if(xSemaphoreTake(pumpop_mutex, ( TickType_t ) 100 )) // 1 sec wait
 							{
-							if(start_overp_time == 0)
-								start_overp_time = time(NULL);
-							else
+							if(pump_pressure_kpa > pump_max_lim)
 								{
-								if(time(NULL) - start_overp_time >= overp_time_limit)
+								if(start_overp_time == 0)
+									start_overp_time = time(NULL);
+								else
 									{
-									if(pump_state == PUMP_ON)
+									if(time(NULL) - start_overp_time >= overp_time_limit)
 										{
-										ESP_LOGI(TAG, "Pump OFF  mon %d", pump_pressure_kpa);
-										stop_pump(1);
+										if(pump_state == PUMP_ON)
+											{
+											ESP_LOGI(TAG, "Pump OFF  mon %d", pump_pressure_kpa);
+											stop_pump(1);
+											}
 										}
 									}
 								}
+							else if((pump_pressure_kpa < pump_max_lim) && (pump_state == PUMP_OFF))
+								{
+								ESP_LOGI(TAG, "Pump ON  mon %d", pump_pressure_kpa);
+								start_pump(1);
+								start_overp_time = 0;
+								}
+							xSemaphoreGive(pumpop_mutex);
 							}
-						else if((pump_pressure_kpa < pump_max_lim) && (pump_state == PUMP_OFF))
-							{
-							ESP_LOGI(TAG, "Pump ON  mon %d", pump_pressure_kpa);
-							start_pump(1);
-							start_overp_time = 0;
-							}
-						xSemaphoreGive(pumpop_mutex);
 						}
 					}
 				}
-			//ESP_LOGI(TAG, "Pump state running:%d, pressure:%d(kPa), current:%d(mA)", pump_state, pump_pressure_kpa, pump_current);
-			if((loop % pcount) == 0)
+			xSemaphoreGive(pumpval_mutex);
+			}
+		else
+			ESP_LOGI(TAG, "Cannot take pumpval_mutex");
+		if((loop % pcount) == 0)
+			{
+			if(pump_state != saved_pump_state ||
+				pump_status != saved_pump_status ||
+					pump_current != saved_pump_current ||
+						pump_pressure_kpa != saved_pump_pressure_kpa)
 				{
-				if(pump_state != saved_pump_state ||
-					pump_status != saved_pump_status ||
-						pump_current != saved_pump_current ||
-							pump_pressure_kpa != saved_pump_pressure_kpa)
-					{
-					sprintf(msg, "%d\1%d\1%d\1%d\1%d\1%d", pump_state, pump_status, pump_current, pump_pressure_kpa, stdev_c, stdev_p);
-					publish_monitor(msg, 0, 0);
-					ESP_LOGI(TAG, "Pump state running:%d, pressure:%d(kPa), current:%d(mA), stdev p:%d, loop:%d", pump_state, pump_pressure_kpa, pump_current, stdev_p, loop);
-					saved_pump_state = pump_state;
-					saved_pump_status = pump_status;
-					saved_pump_current = pump_current;
-					saved_pump_pressure_kpa = pump_pressure_kpa;
-					}
+				sprintf(msg, "%d\1%d\1%d\1%d\1%d\1%d", pump_state, pump_status, pump_current, pump_pressure_kpa, stdev_c, stdev_p);
+				publish_monitor(msg, 0, 0);
+				ESP_LOGI(TAG, "Pump state running:%d, pressure:%d(kPa), current:%d(mA), stdev p:%d, loop:%d", pump_state, pump_pressure_kpa, pump_current, stdev_p, loop);
+				saved_pump_state = pump_state;
+				saved_pump_status = pump_status;
+				saved_pump_current = pump_current;
+				saved_pump_pressure_kpa = pump_pressure_kpa;
 				}
 			}
-		// run loop every 2 sec if !PUMP_ONLINE
-		// elese loop immediately
+		// run loop every 2 sec if PUMP_OFFLINE
+		// else loop every 100 msec
 		if(pump_status != PUMP_ONLINE)
 			{
 			pcount = 1;
@@ -661,7 +712,7 @@ void pump_mon_task(void *pvParameters)
 		else
 			{
 			pcount = 10;
-			vTaskDelay(20 / portTICK_PERIOD_MS);
+			vTaskDelay(100 / portTICK_PERIOD_MS);
 			}
 		loop++;
 		}

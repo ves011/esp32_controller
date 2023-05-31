@@ -31,7 +31,7 @@
 
 	#define PUMP_ON					(1)
 	#define PUMP_OFF				(0)
-	#define PUMP_FAULT				(2)
+	#define PUMP_FAULT				(4)
 	#define PUMP_ONLINE				(2)
 	#define PUMP_OFFLINE			(3)
 
@@ -49,6 +49,9 @@
 /** How long(msec) the button has to be pressed  to send the command*/
 #define PUSH_TIME_MS			(3000)
 
+/** under this value the pump is OFF */
+#define PUMP_CURRENT_OFF		300
+
  /** Name of the file storing pressure sensor output (mV) for 0kPA */
 #define OFFSET_FILE				"psensor_voffset.txt"
  /** Name of the file storing operating limits for pump - see pump_limits definition */
@@ -56,6 +59,11 @@
  /** Name of the file storing pump status: online | offline */
 #define OPERATIONAL_FILE		"pump_status.txt"
 
+#define DEFAULT_PRES_MIN_LIMIT		300
+#define DEFAULT_PRES_MAX_LIMIT		370
+#define DEFAULT_PUMP_CURRENT_LIMIT	5000
+#define DEFAULT_STDEV				20
+#define DEFAULT_OVERP_TIME_LIMIT	10
 
 
 /**
