@@ -10,8 +10,11 @@
 
 #define TIMER_SCALE_ADC           	(TIMER_BASE_CLK / TIMER_DIVIDER / 1000000)  // convert counter value to useconds
 #define SAMPLE_PERIOD				500
-#define NR_SAMPLES					200
-
+#if ACTIVE_CONTROLLER == WATER_CONTROLLER
+	#define NR_SAMPLES					50
+#else
+	#define NR_SAMPLES					200
+#endif
 #define ADC_TIMER_GROUP				TIMER_GROUP_1
 #define ADC_TIMER_INDEX				TIMER_1
 

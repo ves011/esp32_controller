@@ -41,13 +41,14 @@
 #include "adc_op.h"
 #include "pumpop.h"
 #include "westaop.h"
+#include "waterop.h"
 
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
 
 #define TAG "ctrl_dev"
 #define PROMPT_STR "CTRLDEV"
-#define CONFIG_STORE_HISTORY 0
+#define CONFIG_STORE_HISTORY 1
 #define CONFIG_CONSOLE_MAX_COMMAND_LINE_LENGTH	1024
 
 #include "wifi_credentials.h"
@@ -106,6 +107,8 @@ void app_main(void)
 	int bp_ctrl = 6; //IO6 on J5 pin 8
 #elif ACTIVE_CONTROLLER == WESTA_CONTROLLER
 	int bp_ctrl = 8; //IO8 on J4 pin 8
+#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
+	int bp_ctrl = 8; //TBD
 #endif
 	gpio_config_t io_conf;
 	io_conf.intr_type = GPIO_INTR_DISABLE;
@@ -142,17 +145,7 @@ void app_main(void)
 	restart_in_progress = 0;
 	console_state = CONSOLE_OFF;
 	setenv("TZ","EET-2EEST,M3.4.0/03,M10.4.0/04",1);
-	esp_err_t ret = esp_vfs_spiffs_register(&conf_spiffs);
-	if (ret != ESP_OK)
-		{
-        if (ret == ESP_FAIL)
-            ESP_LOGE(TAG, "Failed to mount or format filesystem");
-        else if (ret == ESP_ERR_NOT_FOUND)
-            ESP_LOGE(TAG, "Failed to find SPIFFS partition");
-        else
-            ESP_LOGE(TAG, "Failed to initialize SPIFFS (%s)", esp_err_to_name(ret));
-        esp_restart();
-		}
+	spiffs_storage_check();
 	initialize_nvs();
 	controller_op_registered = 0;
 	rw_params(PARAM_READ, PARAM_CONSOLE, &console_state);
@@ -199,6 +192,8 @@ void app_main(void)
 	register_pumpop();
 #elif ACTIVE_CONTROLLER == WESTA_CONTROLLER
 	register_westaop();
+#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
+	register_waterop();
 #endif
 	controller_op_registered = 1;
 

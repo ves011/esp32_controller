@@ -1938,41 +1938,6 @@
 			<location>D:/dev/esp-idf-v4.4.3/components/mbedtls/port/net_sockets.c</location>
 		</link>
 		<link>
-			<name>build/ide/esp_idf_components/mon/cmds/cmd_system.c</name>
-			<type>1</type>
-			<location>D:/dev/esp32/esp32_common/cmds/cmd_system.c</location>
-		</link>
-		<link>
-			<name>build/ide/esp_idf_components/mon/cmds/cmd_wifi.c</name>
-			<type>1</type>
-			<location>D:/dev/esp32/esp32_common/cmds/cmd_wifi.c</location>
-		</link>
-		<link>
-			<name>build/ide/esp_idf_components/mon/tcp/mqtt_ctrl.c</name>
-			<type>1</type>
-			<location>D:/dev/esp32/esp32_common/tcp/mqtt_ctrl.c</location>
-		</link>
-		<link>
-			<name>build/ide/esp_idf_components/mon/tcp/ntp_sync.c</name>
-			<type>1</type>
-			<location>D:/dev/esp32/esp32_common/tcp/ntp_sync.c</location>
-		</link>
-		<link>
-			<name>build/ide/esp_idf_components/mon/tcp/tcp_log.c</name>
-			<type>1</type>
-			<location>D:/dev/esp32/esp32_common/tcp/tcp_log.c</location>
-		</link>
-		<link>
-			<name>build/ide/esp_idf_components/mon/utils/ota.c</name>
-			<type>1</type>
-			<location>D:/dev/esp32/esp32_common/utils/ota.c</location>
-		</link>
-		<link>
-			<name>build/ide/esp_idf_components/mon/utils/utils.c</name>
-			<type>1</type>
-			<location>D:/dev/esp32/esp32_common/utils/utils.c</location>
-		</link>
-		<link>
 			<name>build/ide/esp_idf_components/mqtt/esp-mqtt/mqtt_client.c</name>
 			<type>1</type>
 			<location>D:/dev/esp-idf-v4.4.3/components/mqtt/esp-mqtt/mqtt_client.c</location>

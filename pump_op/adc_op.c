@@ -23,6 +23,7 @@
 #include "common_defines.h"
 #include "adc_op.h"
 #include "pumpop.h"
+#include "waterop.h"
 
 //#define DEBUG_ADC
 
@@ -30,12 +31,18 @@ int stdev_c, stdev_p;
 
 static const char *TAG = "ADC OP";
 
-static int sample_count;
-static int adc_raw[2][NR_SAMPLES];
-static int adc_mv[2][NR_SAMPLES];
+int sample_count;
+int adc_raw[2][NR_SAMPLES];
+int adc_mv[2][NR_SAMPLES];
 
-static adc_channel_t channel[] = {CURRENT_ADC_CHANNEL, SENSOR_ADC_CHANNEL};
-static esp_adc_cal_characteristics_t adc1_chars;
+#if ACTIVE_CONTROLLER == PUMP_CONTROLLER
+	static adc_channel_t channel[] = {CURRENT_ADC_CHANNEL, SENSOR_ADC_CHANNEL};
+#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
+	extern dvconfig_t dvconfig[2];
+	extern int activeDV;
+//	static adc_channel_t channel = dvconfig[0].pin_current - 1;
+#endif
+esp_adc_cal_characteristics_t adc1_chars;
 static bool cali_enable;
 
 void adc_calibration_init(void)
@@ -43,8 +50,13 @@ void adc_calibration_init(void)
     esp_err_t ret;
     cali_enable = false;
 	ESP_ERROR_CHECK(adc1_config_width(ADC_WIDTH_BIT_DEFAULT));
-    ESP_ERROR_CHECK(adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_11));
-    ESP_ERROR_CHECK(adc1_config_channel_atten(ADC1_CHANNEL_4, ADC_ATTEN_DB_11));
+#if ACTIVE_CONTROLLER == PUMP_CONTROLLER
+    ESP_ERROR_CHECK(adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_11)); // current channel - pump
+    ESP_ERROR_CHECK(adc1_config_channel_atten(ADC1_CHANNEL_4, ADC_ATTEN_DB_11)); // pressure channel - pump
+#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
+    ESP_ERROR_CHECK(adc1_config_channel_atten(ADC1_CHANNEL_3, ADC_ATTEN_DB_11)); // current channel - DV2
+    ESP_ERROR_CHECK(adc1_config_channel_atten(ADC1_CHANNEL_0, ADC_ATTEN_DB_11)); // current channel - DV1
+#endif
     ret = esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP_FIT);
     if (ret == ESP_ERR_NOT_SUPPORTED)
         ESP_LOGW(TAG, "Calibration scheme not supported, skip software calibration");
@@ -66,8 +78,12 @@ static bool IRAM_ATTR adc_timer_callback(void *args)
 	{
     BaseType_t high_task_awoken = pdFALSE;
     //adc_raw[idx][sample_count++] = adc1_get_raw(channel[idx]);
+#if ACTIVE_CONTROLLER == PUMP_CONTROLLES
     adc_raw[0][sample_count] = adc1_get_raw(channel[0]);
     adc_raw[1][sample_count++] = adc1_get_raw(channel[1]);
+#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
+    adc_raw[0][sample_count++] = adc1_get_raw(dvconfig[activeDV].pin_current - 1);
+#endif
     if(sample_count >= NR_SAMPLES)
     	timer_pause(ADC_TIMER_GROUP, ADC_TIMER_INDEX);
     return high_task_awoken == pdTRUE; // return whether we need to yield at the end of ISR
