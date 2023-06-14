@@ -246,7 +246,7 @@ void gate_task()
 			{
 			if(cmd_state == CMD_OPEN)
 				{
-				if(gevt.pulse_count > 1800) //that means steady
+				if(gevt.pulse_count > 1800) //that means steady open or openp
 					{
 					if(open_count == 1)
 						gate_state = STATE_OPEN;
@@ -256,7 +256,7 @@ void gate_task()
 					open_count = 0;
 					gate_moving_state = STEADY_STATE;
 					}
-				else if(gevt.pulse_count < 100)
+				else if(gevt.pulse_count < 100) // steady closed
 					{
 					gate_moving_state = STEADY_STATE;
 					gate_state = STATE_CLOSED;
@@ -287,9 +287,16 @@ void gate_task()
 				}
 			else // CMD_COMPLETE
 				{
-				if(gevt.pulse_count < 1800 && gevt.pulse_count > 100)
+				if(gevt.pulse_count < 1800 && gevt.pulse_count > 100) // condition for moving state
 					{
-					ESP_LOGI(TAG, "Illegal CMD_COMPLETE sate %4d", gevt.pulse_count);
+					//it might fall here because gate op is triggered by remote radio
+					//in this case CMD_COMPLETE state is legal
+					//but gate_state needs to be updated
+					//in this case we cannot know, in open STEADY state, if open state is full or partial
+					//ESP_LOGI(TAG, "Illegal CMD_COMPLETE sate %4d", gevt.pulse_count);
+					gate_moving_state = MOVING_STATE;
+					gate_state = STATE_OPENP;
+					ESP_LOGI(TAG, "OP triggered by remote radio %4d", gevt.pulse_count);
 					}
 				else
 					{
