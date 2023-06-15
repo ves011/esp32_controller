@@ -35,14 +35,17 @@
 
 /** Name of the file storing dv program */
 #define PROGRAM_FILE		"dv_program.txt"
+#define STATUS_FILE			"program_status.txt"
 
 /** watering program state */
 #define NOT_STARTED				0
 #define IN_PROGRESS				1
 #define COMPLETED				2
-#define INVALID					3  // if start time is after stop time
+#define ABORTED					3
+#define INVALID					4  // if start time is after stop time
 
 #define WATER_PUMP_DESC			"pump01"
+#define PUMP_CMD_TOPIC			"pump01/cmd"
 
 typedef struct
 	{
