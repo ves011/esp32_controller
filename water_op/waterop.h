@@ -43,6 +43,10 @@
 #define COMPLETED				2
 #define ABORTED					3
 #define INVALID					4  // if start time is after stop time
+#define FAULT_PUMP				10
+#define DV_FAULT				11
+#define PUMP_NO_RESPONSE		12
+#define DV_START_FAIL			13
 
 #define WATER_PUMP_DESC			"pump01"
 #define PUMP_CMD_TOPIC			"pump01/cmd"
@@ -68,7 +72,8 @@ typedef struct
 			int stoph;
 			int stopm;
 			int cs;
-			} p[2];
+			int fault;
+			} p[DVCOUNT];
 		} dvprogram_t;
 
 struct {

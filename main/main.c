@@ -33,6 +33,7 @@
 #include "cmd_system.h"
 #include "utils.h"
 #include "tcp_log.h"
+#include "mqtt_client.h"
 #include "mqtt_ctrl.h"
 #include "ntp_sync.h"
 #include "esp_ota_ops.h"
@@ -45,6 +46,7 @@
 
 #include "driver/adc.h"
 #include "esp_adc_cal.h"
+#include "external_defs.h"
 
 #define TAG "ctrl_dev"
 #define PROMPT_STR "CTRLDEV"
@@ -149,6 +151,7 @@ void app_main(void)
 	initialize_nvs();
 	controller_op_registered = 0;
 	rw_params(PARAM_READ, PARAM_CONSOLE, &console_state);
+	tsync = 0;
 	wifi_join(DEFAULT_SSID, DEFAULT_PASS, JOIN_TIMEOUT_MS);
 	esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 	tcp_log_init();
