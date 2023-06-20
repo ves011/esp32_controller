@@ -50,7 +50,7 @@
 
 #define TAG "ctrl_dev"
 #define PROMPT_STR "CTRLDEV"
-#define CONFIG_STORE_HISTORY 1
+#define CONFIG_STORE_HISTORY 0
 #define CONFIG_CONSOLE_MAX_COMMAND_LINE_LENGTH	1024
 
 #include "wifi_credentials.h"

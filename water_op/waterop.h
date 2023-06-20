@@ -32,6 +32,8 @@
 #define STDEV_MAX				10
 #define DVSTATE_OK				1
 #define DVSTATE_FAULT			2
+#define DVOPEN					1
+#define DVCLOSE					0
 
 /** Name of the file storing dv program */
 #define PROGRAM_FILE		"dv_program.txt"
@@ -42,17 +44,30 @@
 #define IN_PROGRESS				1
 #define COMPLETED				2
 #define ABORTED					3
-#define INVALID					4  // if start time is after stop time
+#define START_ERROR				4
+#define INVALID					5  // if start time is after stop time
+
+#define RETRY_OP_WATERING		5
+#define NO_PUMP_RESPONSE		6
+#define PUMP_WRONG_STATE		7
+#define DV_ERROR				8
+
+#define RESET_PROGRAM_H			15
+#define RESET_PROGRAM_M			22
+
 #define FAULT_PUMP				10
 #define DV_FAULT				11
 #define PUMP_NO_RESPONSE		12
-#define DV_START_FAIL			13
+#define DV_OPEN_FAIL			13
+#define DV_CLOSE_FAIL			14
+
 
 #define WATER_PUMP_DESC			"pump01"
 #define PUMP_CMD_TOPIC			"pump01/cmd"
 
 typedef struct
 	{
+	uint8_t dvno;
 	uint8_t pin_op;
 	uint8_t pin_current;
 	uint8_t pin_cmd;
