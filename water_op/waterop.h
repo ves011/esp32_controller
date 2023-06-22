@@ -34,6 +34,7 @@
 #define DVSTATE_FAULT			2
 #define DVOPEN					1
 #define DVCLOSE					0
+#define MINPRES					100
 
 /** Name of the file storing dv program */
 #define PROGRAM_FILE		"dv_program.txt"
@@ -51,6 +52,9 @@
 #define NO_PUMP_RESPONSE		6
 #define PUMP_WRONG_STATE		7
 #define DV_ERROR				8
+#define PUMP_PRESSURE_LOW		9
+#define START_WATERING_ERROR	10
+#define STOP_WATERING_ERROR		11
 
 #define RESET_PROGRAM_H			15
 #define RESET_PROGRAM_M			22

@@ -44,7 +44,7 @@ static xQueueHandle gpio_evt_queue = NULL;
 static TaskHandle_t water_task_handle; //, gpio_dv_cmd_handle;
 static int watering_status;
 static int pump_present, pstate, pstatus, ppressure, pcurrent, pminlim, pmaxlim;
-static time_t last_pump_state, last_pump_mon;
+static volatile uint64_t last_pump_state, last_pump_mon;
 static dvprogram_t dv_program;
 dvconfig_t dvconfig[DVCOUNT];
 int activeDV;
@@ -134,11 +134,10 @@ void parse_devstr(int argc, char **argv)
 	else if(strstr(argv[0], WATER_PUMP_DESC"/monitor"))
 		{
 		char *tok = strtok(argv[1], "\1");
-		last_pump_mon = -1;
+		last_pump_mon = 0;
 		pstate = pstatus = pcurrent = ppressure = -1;
 		if(tok)
 			{
-			last_pump_mon = time(NULL);
 			tok = strtok(NULL, "\1");
 			if(tok)
 				{
@@ -156,19 +155,22 @@ void parse_devstr(int argc, char **argv)
 							pcurrent = atoi(tok);
 							tok = strtok(NULL, "\1");
 							if(tok)
+								{
 								ppressure = atoi(tok);
+								last_pump_mon = esp_timer_get_time();
+								}
 
 			}	}	}	}	}
-		//ESP_LOGI(TAG, "pump monitor: %ld / %d / %d / %d / %d", last_pump_mon, pstate, pstatus, pcurrent, ppressure);
+		//ESP_LOGI(TAG, "pump monitor: %llu / %d / %d / %d / %d", last_pump_mon, pstate, pstatus, pcurrent, ppressure);
 		}
 	else if(strstr(argv[0], WATER_PUMP_DESC"/state"))
 		{
 		char *tok = strtok(argv[1], "\1");
-		last_pump_state = -1;
+		ESP_LOGI(TAG, "dev str: %s / %s", argv[0], argv[1]);
 		pstate = pstatus= pcurrent = ppressure = pminlim = pmaxlim = -1;
+		last_pump_state = 0;
 		if(tok)
 			{
-			last_pump_state = time(NULL);
 			tok = strtok(NULL, "\1");
 			if(tok)
 				{
@@ -197,9 +199,12 @@ void parse_devstr(int argc, char **argv)
 										pminlim = atoi(tok);
 										tok = strtok(NULL, "\1");
 										if(tok)
+											{
 											pmaxlim = atoi(tok);
+											last_pump_state = esp_timer_get_time();
+											}
 			}	}	}	}	}	}	}	}
-		ESP_LOGI(TAG, "pump state: %ld / %d / %d / %d / %d / %d / %d", last_pump_state, pstate, pstatus, pcurrent, ppressure, pminlim, pmaxlim);
+		ESP_LOGI(TAG, "pump state: %llu / %d / %d / %d / %d / %d / %d", last_pump_state, pstate, pstatus, pcurrent, ppressure, pminlim, pmaxlim);
 
 		}
 	}
@@ -261,17 +266,17 @@ int do_dvop(int argc, char **argv)
     else if(strcmp(waterop_args.op->sval[0], "program") == 0)
     	{
     	int starth, startm, stoph, stopm, i;
-    	read_program(&pval);
+    	read_program(&dv_program);
+    	memcpy(&pval, &dv_program, sizeof(dvprogram_t));
     	if(waterop_args.dv->count == 0) // no params -> just show DVs program
     		{
     		mqttbuf[0] = 0;
     		for(int i = 0; i < DVCOUNT; i++)
     			{
-    			sprintf(buf, "%d\1%d\1%d\1%d\1%d\1%d\1", pval.p[i].dv, pval.p[i].starth, pval.p[i].startm, pval.p[i].stoph, pval.p[i].stopm, pval.p[i].cs);\
+    			sprintf(buf, "%d\1%d\1%d\1%d\1%d\1%d\1", dv_program.p[i].dv, dv_program.p[i].starth, dv_program.p[i].startm, dv_program.p[i].stoph, dv_program.p[i].stopm, dv_program.p[i].cs);
     			strcat(mqttbuf, buf);
+    			ESP_LOGI(TAG, "DV%d program:  %d %d %d %d %d %d", i, dv_program.p[i].dv, dv_program.p[i].starth, dv_program.p[i].startm, dv_program.p[i].stoph, dv_program.p[i].stopm, dv_program.p[i].cs);
     			}
-    		ESP_LOGI(TAG, "DV0 program:  %d %d %d %d %d %d", pval.p[0].dv, pval.p[0].starth, pval.p[0].startm, pval.p[0].stoph, pval.p[0].stopm, pval.p[0].cs);
-    		ESP_LOGI(TAG, "DV1 program:  %d %d %d %d %d %d", pval.p[1].dv, pval.p[1].starth, pval.p[1].startm, pval.p[1].stoph, pval.p[1].stopm, pval.p[1].cs);
     		publish_state(mqttbuf, 0, 0);
     		}
     	else
@@ -692,58 +697,62 @@ static int write_status(int idx)
 	}
 static int start_watering(int idx)
 	{
-	int lc, retry_start = 0, ret = 0;
-	time_t ltime;
+	int lc, retry_start = 0, ret = START_WATERING_ERROR;
+	uint64_t ltime;
 	if(dv_program.p[idx].cs == NOT_STARTED) //open DV[idx]
 		{
 		while(retry_start < RETRY_OP_WATERING)
 			{
-			ESP_LOGI(TAG, "try to start watering on DV%d / try %d", dv_program.p[idx].dv, retry_start);
-			publish_topic(PUMP_CMD_TOPIC, "online", 0, 0);
-			vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec to check pressure status
-			ltime = last_pump_state;
-			publish_topic(PUMP_CMD_TOPIC, "state", 0, 0);
+			ESP_LOGI(TAG, "try to start watering on DV%d / try %d /last_pump_state: %llu", dv_program.p[idx].dv, retry_start, last_pump_state);
 			lc = 0;
-			while(last_pump_state <= ltime) //wait 2 sec for pump to be online and pressure above pmaxlim
+			ltime = esp_timer_get_time();
+			while(last_pump_state <= ltime) //wait 5 sec for pump to be online and pressure above pmaxlim
 				{
+				publish_topic(PUMP_CMD_TOPIC, "online", 1, 0);
+				vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec to check pressure status
+				publish_topic(PUMP_CMD_TOPIC, "state", 1, 0);
 				lc++;
-				if(lc > 20)
+				if(lc > 10)
 					break;
-				vTaskDelay(100 / portTICK_PERIOD_MS);
+				vTaskDelay(500 / portTICK_PERIOD_MS);
 				}
-			if(lc >= 20) // no response from pump
+			if(lc >= 10) // no response from pump
 				{
 				retry_start++;
 				ret = NO_PUMP_RESPONSE;
 				if(retry_start >= RETRY_OP_WATERING)
 					break;
+				ESP_LOGI(TAG, "No response from pump #1");
 				continue;
 				}
-			if(pstatus == PUMP_ONLINE)// && ppressure > pmaxlim)
+			if(pstatus == PUMP_ONLINE && ppressure > pmaxlim)
 				{
+				ESP_LOGI(TAG, "start1 ok: %llu", last_pump_state);
 				open_dv(dv_program.p[idx].dv);
 				vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec to check pressure status
-				ltime = last_pump_state;
-				publish_topic(PUMP_CMD_TOPIC, "state", 0, 0);
+				ltime = esp_timer_get_time();
 				lc = 0;
-				while(last_pump_mon <= ltime) //wait 2 sec for pump monitor report
+				while(last_pump_state <= ltime) //wait 5 sec for pump monitor report
 					{
+					publish_topic(PUMP_CMD_TOPIC, "state", 1, 0);
 					lc++;
-					if(lc > 20)
+					if(lc > 10)
 						break;
-					vTaskDelay(100 / portTICK_PERIOD_MS);
+					vTaskDelay(500 / portTICK_PERIOD_MS);
 					}
-				if(lc >= 20) // no response from pump
+				if(lc > 10) // no response from pump
 					{
 					close_dv(dv_program.p[idx].dv);
 					retry_start++;
 					ret = NO_PUMP_RESPONSE;
 					if(retry_start >= RETRY_OP_WATERING)
 						break;
+					ESP_LOGI(TAG, "No response from pump #2");
 					continue;
 					}
-				if(ppressure < pmaxlim)
+				if(ppressure < pmaxlim  && ppressure > MINPRES)
 					{
+					ESP_LOGI(TAG, "start2 ok: %llu", last_pump_state);
 					dv_program.p[idx].cs = IN_PROGRESS;
 					watering_status = WATER_ON;
 					ESP_LOGI(TAG, "Watering program for DV%d started rs:%d", dv_program.p[idx].dv, retry_start);
@@ -753,10 +762,21 @@ static int start_watering(int idx)
 					}
 				else
 					{
-					ESP_LOGI(TAG, "Error! DV%d - cannot open rs:%d", dv_program.p[idx].dv, retry_start);
-					close_dv(dv_program.p[idx].dv);
-					publish_topic(PUMP_CMD_TOPIC, "offline", 0, 0);
-					ret = DV_ERROR;
+					if(ppressure > pmaxlim)
+						{
+						ESP_LOGI(TAG, "Error! DV%d - cannot open rs:%d", dv_program.p[idx].dv, retry_start);
+						close_dv(dv_program.p[idx].dv);
+						publish_topic(PUMP_CMD_TOPIC, "offline", 0, 0);
+						ret = DV_ERROR;
+						}
+					else if(ppressure < MINPRES)
+						{
+						ESP_LOGI(TAG, "Error! DV%d - no water pressure rs:%d", dv_program.p[idx].dv, retry_start);
+						close_dv(dv_program.p[idx].dv);
+						publish_topic(PUMP_CMD_TOPIC, "offline", 0, 0);
+						ret = PUMP_PRESSURE_LOW;
+						}
+
 					retry_start++;
 					if(retry_start >= RETRY_OP_WATERING)
 						break;
@@ -783,8 +803,8 @@ static int start_watering(int idx)
 
 static int stop_watering(int idx, int reason)
 	{
-	int lc, retry_stop = 0, ret = 0;
-	time_t ltime;
+	int lc, retry_stop = 0, ret = STOP_WATERING_ERROR;
+	time_t ltime = esp_timer_get_time();
 	if(dv_program.p[idx].cs == IN_PROGRESS)
 		{
 		while(retry_stop < RETRY_OP_WATERING)
@@ -792,17 +812,17 @@ static int stop_watering(int idx, int reason)
 			ESP_LOGI(TAG, "Stop watering try %d", retry_stop);
 			close_dv(dv_program.p[idx].dv);
 			vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec to check pressure status
-			ltime = last_pump_state;
-			publish_topic(PUMP_CMD_TOPIC, "state", 0, 0);
 			lc = 0;
-			while(last_pump_state <= ltime) //wait 2 sec for pump state report
+			ltime = esp_timer_get_time();
+			while(last_pump_state <= ltime) //wait 5 sec for pump state report
 				{
+				publish_topic(PUMP_CMD_TOPIC, "state", 1, 0);
 				lc++;
-				if(lc > 20)
+				if(lc > 10)
 					break;
-				vTaskDelay(100 / portTICK_PERIOD_MS);
+				vTaskDelay(500 / portTICK_PERIOD_MS);
 				}
-			if(lc >= 20) // no response from pump
+			if(lc >= 10) // no response from pump
 				{
 				ret = NO_PUMP_RESPONSE;
 				retry_stop++;
@@ -813,22 +833,22 @@ static int stop_watering(int idx, int reason)
 					}
 				continue;
 				}
-			//if(ppressure >= pmaxlim) // dv closed successfully
-			if(1 == 1)
+			if(ppressure >= pmaxlim) // dv closed successfully
 				{
-				publish_topic(PUMP_CMD_TOPIC, "offline", 0, 0);
-				vTaskDelay(1000 / portTICK_PERIOD_MS);
-				ltime = last_pump_state;
-				publish_topic(PUMP_CMD_TOPIC, "state", 0, 0);
+				ESP_LOGI(TAG, "close1 ok %llu", last_pump_state);
+				ltime = esp_timer_get_time();
 				lc = 0;
 				while(last_pump_state <= ltime) //wait 2 sec for pump state report
 					{
+					publish_topic(PUMP_CMD_TOPIC, "offline", 1, 0);
+					vTaskDelay(1000 / portTICK_PERIOD_MS);
+					publish_topic(PUMP_CMD_TOPIC, "state", 1, 0);
 					lc++;
-					if(lc > 20)
+					if(lc > 10)
 						break;
-					vTaskDelay(100 / portTICK_PERIOD_MS);
+					vTaskDelay(500 / portTICK_PERIOD_MS);
 					}
-				if(lc >= 20) // no response from pump
+				if(lc >= 10) // no response from pump
 					{
 					ret = NO_PUMP_RESPONSE;
 					retry_stop++;
@@ -838,6 +858,7 @@ static int stop_watering(int idx, int reason)
 					}
 				if(pstatus == PUMP_OFFLINE)
 					{
+					ESP_LOGI(TAG, "close2 ok %llu", last_pump_state);
 					dv_program.p[idx].fault = 0;
 					dv_program.p[idx].cs = reason;
 					watering_status = WATER_OFF;
@@ -845,6 +866,7 @@ static int stop_watering(int idx, int reason)
 					write_status(idx);
 					ESP_LOGI(TAG, "Watering program for DV%d stopped", dv_program.p[idx].dv);
 					activeDV = -1;
+					ret = ESP_OK;
 					break;
 					}
 				else
@@ -867,7 +889,7 @@ static int stop_watering(int idx, int reason)
 		}
 	if(ret > 0) //last try before exit
 		{
-		publish_topic(PUMP_CMD_TOPIC, "offline", 0, 0);
+		publish_topic(PUMP_CMD_TOPIC, "offline", 1, 0);
 		close_dv(dv_program.p[idx].dv);
 		activeDV = -1;
 		}
