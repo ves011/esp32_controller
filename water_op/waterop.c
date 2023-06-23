@@ -804,7 +804,7 @@ static int start_watering(int idx)
 static int stop_watering(int idx, int reason)
 	{
 	int lc, retry_stop = 0, ret = STOP_WATERING_ERROR;
-	time_t ltime = esp_timer_get_time();
+	uint64_t ltime = esp_timer_get_time();
 	if(dv_program.p[idx].cs == IN_PROGRESS)
 		{
 		while(retry_stop < RETRY_OP_WATERING)
@@ -826,6 +826,7 @@ static int stop_watering(int idx, int reason)
 				{
 				ret = NO_PUMP_RESPONSE;
 				retry_stop++;
+				ESP_LOGI(TAG, "No pump response for DV off: %llu / %llu", ltime, last_pump_state);
 				if(retry_stop >= RETRY_OP_WATERING)
 					{
 					ret = PUMP_NO_RESPONSE;
@@ -838,7 +839,8 @@ static int stop_watering(int idx, int reason)
 				ESP_LOGI(TAG, "close1 ok %llu", last_pump_state);
 				ltime = esp_timer_get_time();
 				lc = 0;
-				while(last_pump_state <= ltime) //wait 2 sec for pump state report
+				//while(last_pump_state <= ltime) //wait 2 sec for pump state report
+				while(pstatus != PUMP_OFFLINE)
 					{
 					publish_topic(PUMP_CMD_TOPIC, "offline", 1, 0);
 					vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -851,6 +853,7 @@ static int stop_watering(int idx, int reason)
 				if(lc >= 10) // no response from pump
 					{
 					ret = NO_PUMP_RESPONSE;
+					ESP_LOGI(TAG, "No pump response for offline: %llu / %llu", ltime, last_pump_state);
 					retry_stop++;
 					if(retry_stop >= RETRY_OP_WATERING)
 						break;
@@ -872,6 +875,7 @@ static int stop_watering(int idx, int reason)
 				else
 					{
 					ret = PUMP_WRONG_STATE;
+					ESP_LOGI(TAG, "pump wrong state: %llu / %llu", ltime, last_pump_state);
 					retry_stop++;
 					if(retry_stop >= RETRY_OP_WATERING)
 						break;
@@ -880,6 +884,7 @@ static int stop_watering(int idx, int reason)
 				}
 			else
 				{
+				ESP_LOGI(TAG, "DV%d not closed. Pump pressure still low", dv_program.p[idx].dv);
 				ret = DV_CLOSE_FAIL;
 				retry_stop++;
 				if(retry_stop >= RETRY_OP_WATERING)

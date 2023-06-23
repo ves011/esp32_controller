@@ -300,13 +300,10 @@ void gate_task()
 					}
 				else
 					{
-					if(gate_state == 0)
-						{
-						if(gevt.pulse_count < 100)
-							gate_state = STATE_CLOSED;
-						else
-							gate_state = STATE_OPENP;
-						}
+					if(gevt.pulse_count < 100)
+						gate_state = STATE_CLOSED;
+					else
+						gate_state = STATE_OPENP;
 					gate_moving_state = STEADY_STATE;
 					}
 				}
