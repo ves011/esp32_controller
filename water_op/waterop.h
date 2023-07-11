@@ -69,6 +69,15 @@
 #define WATER_PUMP_DESC			"pump01"
 #define PUMP_CMD_TOPIC			"pump01/cmd"
 
+#define WATERING_STATE			"wstate"
+#define PUMP_STATE				"pstate"
+#define PROG_HISTORY			"phist"
+#define ERR_START				"err_start"
+#define ERR_STOP				"err_stop"
+
+#define STATE_W					"state"
+#define STATE_P					"program"
+
 typedef struct
 	{
 	uint8_t dvno;
