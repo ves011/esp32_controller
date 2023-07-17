@@ -131,7 +131,7 @@ void app_main(void)
     		sbp = esp_partition_get(pit);
     		if(sbp)
     			{
-   				if(!strcmp(sbp->label, FACTORY_PART_NAME))
+   				if(!strcmp(sbp->label, OTA_PART_NAME))
     				break;
     			}
     		pit = esp_partition_next(pit);

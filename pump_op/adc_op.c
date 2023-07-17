@@ -78,7 +78,7 @@ static bool IRAM_ATTR adc_timer_callback(void *args)
 	{
     BaseType_t high_task_awoken = pdFALSE;
     //adc_raw[idx][sample_count++] = adc1_get_raw(channel[idx]);
-#if ACTIVE_CONTROLLER == PUMP_CONTROLLES
+#if ACTIVE_CONTROLLER == PUMP_CONTROLLER
     adc_raw[0][sample_count] = adc1_get_raw(channel[0]);
     adc_raw[1][sample_count++] = adc1_get_raw(channel[1]);
 #elif ACTIVE_CONTROLLER == WATER_CONTROLLER

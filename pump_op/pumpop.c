@@ -612,7 +612,8 @@ void pump_mon_task(void *pvParameters)
 	minmax_t min[10], max[10];
 	int saved_pump_state = -1, saved_pump_status = -1, saved_pump_current = -1, saved_pump_pressure_kpa = -1;
 	char msg[80];
-	uint32_t pcount = 20;
+	uint32_t pcount = 20, void_run = 0;
+	time_t running_time = 0, start_time = 0;
 	while(1)
 		{
 		memset(min, 0, sizeof(min));
@@ -655,7 +656,7 @@ void pump_mon_task(void *pvParameters)
 						{
 						if(xSemaphoreTake(pumpop_mutex, ( TickType_t ) 100 )) // 1 sec wait
 							{
-							if(pump_pressure_kpa > pump_max_lim)
+							if(pump_pressure_kpa >= pump_max_lim)
 								{
 								if(start_overp_time == 0)
 									start_overp_time = time(NULL);
@@ -667,17 +668,35 @@ void pump_mon_task(void *pvParameters)
 											{
 											ESP_LOGI(TAG, "Pump OFF  mon %d", pump_pressure_kpa);
 											stop_pump(1);
+											if(running_time <= (overp_time_limit * 12)/10) // here is a 10% tolerance
+												void_run++;
+											else
+												void_run = 0;
+											if(void_run > 5)
+												{
+												ESP_LOGI(TAG, "void run overflow %d, pump set to offline mode", void_run);
+												void_run = 0;
+												pump_status = PUMP_OFFLINE;
+												}
 											}
 										}
 									}
 								}
-							else if((pump_pressure_kpa < pump_max_lim) && (pump_state == PUMP_OFF))
+							else if(pump_pressure_kpa < pump_max_lim)
 								{
-								ESP_LOGI(TAG, "Pump ON  mon %d", pump_pressure_kpa);
-								start_pump(1);
-								start_overp_time = 0;
+								if(pump_state == PUMP_OFF)
+									{
+									ESP_LOGI(TAG, "Pump ON  mon %d", pump_pressure_kpa);
+									start_pump(1);
+									start_overp_time = 0;
+									start_time = time(NULL);
+									}
 								}
 							xSemaphoreGive(pumpop_mutex);
+							}
+						if(pump_state == PUMP_ON)
+							{
+							running_time = time(NULL) - start_time;
 							}
 						}
 					}
