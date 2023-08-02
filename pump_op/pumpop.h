@@ -64,6 +64,7 @@
 #define DEFAULT_PUMP_CURRENT_LIMIT	5000
 #define DEFAULT_STDEV				20
 #define DEFAULT_OVERP_TIME_LIMIT	10
+#define DEFAULT_VOID_RUN_COUNT		20
 
 
 /**
@@ -77,6 +78,7 @@ struct
     struct arg_int *faultC;
     struct arg_int *stdev;
     struct arg_int *overpt;
+	struct arg_int *vrc;
     struct arg_end *end;
 	} pumpop_args;
 
@@ -97,6 +99,7 @@ typedef struct
 										below this limit the measurement is OK
 										above this limit measurement is rejected: too noisy	*/
 	uint32_t overp_lim;			/*!< how long the pressure needs to be above max_val before the pump to be stopped (sec) */
+	uint32_t void_run_count;	/*!< how many 10secs on/off cycles allowed before turning the pump offline */
 	} pump_limits_t;
 
 extern int pump_pres_stdev;

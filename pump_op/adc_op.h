@@ -11,7 +11,7 @@
 #define TIMER_SCALE_ADC           	(TIMER_BASE_CLK / TIMER_DIVIDER / 1000000)  // convert counter value to useconds
 #define SAMPLE_PERIOD				500
 #if ACTIVE_CONTROLLER == WATER_CONTROLLER
-	#define NR_SAMPLES					50
+	#define NR_SAMPLES					10
 #else
 	#define NR_SAMPLES					200
 #endif
@@ -58,5 +58,6 @@ void init_adc(void);
 void adc_calibration_init(void);
 void config_adc_timer(void);
 int get_pump_adc_values(minmax_t *min, minmax_t *max, int *psensor_mv);
+void get_dv_adc_values(int *dv_mv);
 
 #endif /* MAIN_ADC_OP_H_ */

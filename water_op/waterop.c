@@ -35,12 +35,12 @@
 
 #if ACTIVE_CONTROLLER == WATER_CONTROLLER
 
-extern int adc_raw[2][NR_SAMPLES], adc_mv[2][NR_SAMPLES];
-extern esp_adc_cal_characteristics_t adc1_chars;
-extern int sample_count;
+//extern int adc_raw[2][NR_SAMPLES], adc_mv[2][NR_SAMPLES];
+//extern esp_adc_cal_characteristics_t adc1_chars;
+//extern int sample_count;
 
 static const char *TAG = "WATER OP";
-static xQueueHandle gpio_evt_queue = NULL;
+//static xQueueHandle gpio_evt_queue = NULL;
 static TaskHandle_t water_task_handle; //, gpio_dv_cmd_handle;
 static int watering_status;
 static int pump_present, pstate, pstatus, ppressure, pcurrent, pminlim, pmaxlim;
@@ -62,6 +62,7 @@ typedef struct
 		uint32_t val;
 		}msg_t;
 
+#ifdef DVALVE
 static void IRAM_ATTR gpiodv_isr_handler(void* arg)
 	{
 	msg_t msg;
@@ -121,6 +122,114 @@ void close_dv(int dvnum)
 	else
 		ESP_LOGI(TAG, "DV %d out of range - valid is 0 or 1", dvnum);
 	}
+#endif
+#ifdef ACTUATOR
+void open_dv(int dvnum)
+	{
+	int dv_current, op_start = 0;
+	int coff = 0, i;
+	gpio_set_level(PINMOT_A1, PIN_ON);
+	gpio_set_level(PINMOT_B1, PIN_OFF);
+	if(dvnum == 0)
+		gpio_set_level(PINEN_DV0, PIN_ON);
+	else if(dvnum == 1)
+		gpio_set_level(PINEN_DV1, PIN_ON);
+	for(i = 0; i < 30; i++)
+		{
+		vTaskDelay(500 / portTICK_PERIOD_MS);
+		get_dv_adc_values(&dv_current);
+		//ESP_LOGI(TAG, "sense voltage: %d (%04x)", dv_current, dv_current);
+		if(dv_current < CURRENT_OFF_LIM)
+			{
+			if(i >= 5 && op_start == 1)
+				coff++;
+			else
+				{
+				coff = 0;
+				break;
+				}
+			}
+		else
+			op_start = 1;
+		if(coff >= CURRENT_OFF_COUNT)
+			break;
+		}
+	gpio_set_level(PINMOT_A1, PIN_OFF);
+	gpio_set_level(PINMOT_B1, PIN_OFF);
+	gpio_set_level(PINEN_DV0, PIN_OFF);
+	gpio_set_level(PINEN_DV1, PIN_OFF);
+	if(coff == 0) // operation aborted
+		{
+		ESP_LOGI(TAG, "open DV%d failed %d %d", dvnum, i, dv_current);
+		activeDV = -1;
+		}
+	else
+		{
+		ESP_LOGI(TAG, "open DV%d OK %d %d", dvnum, i, dv_current);
+		activeDV =  dvconfig[dvnum].dvno;
+		dvconfig[dvnum].state = DVOPEN;
+		}
+	}
+void close_dv(int dvnum)
+	{
+	int dv_current, op_start = 0;
+	int coff = 0, i;
+	gpio_set_level(PINMOT_A1, PIN_OFF);
+	gpio_set_level(PINMOT_B1, PIN_ON);
+	if(dvnum == 0)
+		gpio_set_level(PINEN_DV0, PIN_ON);
+	else if(dvnum == 1)
+		gpio_set_level(PINEN_DV1, PIN_ON);
+	for(i = 0; i < 30; i++)
+		{
+		vTaskDelay(500 / portTICK_PERIOD_MS);
+		get_dv_adc_values(&dv_current);
+		//ESP_LOGI(TAG, "sense voltage: %d (%04x)", dv_current, dv_current);
+		if(dv_current < CURRENT_OFF_LIM)
+			{
+			if(i >= 5 && op_start == 1)
+				coff++;
+			else
+				{
+				coff = 0;
+				break;
+				}
+			}
+		else
+			op_start = 1;
+		if(coff >= CURRENT_OFF_COUNT)
+			break;
+		}
+	gpio_set_level(PINMOT_A1, PIN_OFF);
+	gpio_set_level(PINMOT_B1, PIN_OFF);
+	gpio_set_level(PINEN_DV0, PIN_OFF);
+	gpio_set_level(PINEN_DV1, PIN_OFF);
+	if(coff == 0) // operation aborted
+		{
+		ESP_LOGI(TAG, "close DV%d failed %d %d", dvnum, i, dv_current);
+		}
+	else
+		{
+		ESP_LOGI(TAG, "close DV%d OK %d %d", dvnum, i, dv_current);
+		activeDV =  -1;
+		dvconfig[dvnum].state = DVCLOSE;
+		}
+	}
+static void config_dv_gpio(void)
+	{
+	gpio_config_t io_conf;
+	io_conf.intr_type = GPIO_INTR_DISABLE;
+	io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL << PINEN_DV0) | (1ULL << PINEN_DV1) | (1ULL << PINMOT_A1) | (1ULL << PINMOT_B1) | (1ULL << PINMOT_A2) | (1ULL << PINMOT_B2);
+    io_conf.pull_down_en = 0;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+    gpio_set_level(PINEN_DV0, PIN_OFF);
+    gpio_set_level(PINEN_DV1, PIN_OFF);
+    gpio_set_level(PINMOT_A1, PIN_OFF);
+    gpio_set_level(PINMOT_B1, PIN_OFF);
+	}
+#endif
 void parse_devstr(int argc, char **argv)
 	{
 	char mqttbuf[20];
@@ -505,6 +614,7 @@ static void get_dv_state()
 void register_waterop()
 	{
 	water_task_handle = NULL;
+#ifdef DVALVE
 	dvconfig[0].pin_cmd = PINCMD_DV1;
 	dvconfig[0].pin_current = PINCURRENT_DV1;
 	dvconfig[0].pin_led = PINLED_DV1;
@@ -514,15 +624,19 @@ void register_waterop()
 	dvconfig[1].pin_current = PINCURRENT_DV2;
 	dvconfig[1].pin_led = PINLED_DV2;
 	dvconfig[1].pin_op = PINOP_DV2;
+#endif
+#ifdef ACTUATOR
+	dvconfig[0].pin_current = PINSENSE_MOT;
+	dvconfig[1].pin_current = PINSENSE_MOT;
+#endif
 	config_dv_gpio();
 	adc_calibration_init();
 	config_adc_timer();
 	dvconfig[0].dvno = DV0;
 	dvconfig[0].state = DVCLOSE;
-	dvconfig[0].pin_op = PINOP_DV1;
 	dvconfig[1].dvno = DV1;
 	dvconfig[1].state = DVCLOSE;
-	dvconfig[1].pin_op = PINOP_DV2;
+
    	activeDV = -1;
    	//get_dv_state();
 	watering_status = WATER_OFF;
@@ -545,18 +659,6 @@ void register_waterop()
     subscribe(WATER_PUMP_DESC"/monitor");
 	subscribe(WATER_PUMP_DESC"/state");
     read_program(&dv_program);
-
-    /*
-     * not needed with existing DVs
-     */
-    /*
-    xTaskCreate(gpio_dv_cmd, "gpio_pump_cmd", 8192, NULL, 5, &gpio_dv_cmd_handle);
-	if(!gpio_dv_cmd_handle)
-		{
-		ESP_LOGE(TAG, "Unable to start gpio cmd dv task");
-		esp_restart();
-		}
-	*/
 	xTaskCreate(water_mon_task, "pump task", 8192, NULL, 5, &water_task_handle);
 	if(!water_task_handle)
 		{
@@ -564,47 +666,6 @@ void register_waterop()
 		esp_restart();
 		}
 	}
-
-void get_dv_current(int *dv_current, int *stdev)
-	{
-	//minmax_t min[10] = {0}, max[10] = {0};
-    uint32_t i, l;
-    int *d_val;
-    int sd = 0, ssd = 0;
-    *dv_current = 0;
-    for(l = 0; l < 20; l++)
-    	{
-		sample_count = 0;
-		timer_set_counter_value(ADC_TIMER_GROUP, ADC_TIMER_INDEX, 0);
-		timer_start(ADC_TIMER_GROUP, ADC_TIMER_INDEX);
-		while(sample_count < NR_SAMPLES)
-			vTaskDelay(pdMS_TO_TICKS(2));
-		for(i = 0; i < NR_SAMPLES; i++)
-			{
-			adc_mv[0][i] = esp_adc_cal_raw_to_voltage(adc_raw[0][i], &adc1_chars);
-			//ESP_LOGI(TAG, "%5d raw = %5d / mv = %5d", i, adc_raw[0][i], adc_mv[0][i]);
-			}
-		d_val = adc_mv[0];
-		sd = 0, ssd = 0;
-		for(i = 10; i < NR_SAMPLES; i++)
-			sd += d_val[i];
-
-		sd /= NR_SAMPLES - 10;
-		for(i = 10; i < NR_SAMPLES; i++)
-			ssd += (d_val[i] - sd) * (d_val[i] - sd);
-		ssd /= NR_SAMPLES - 10;
-		for(i = 1; i < ssd; i++)
-			{
-			if(i * i > ssd)
-				break;
-			}
-		*stdev = i -1;
-		ESP_LOGI(TAG, "%4d stdev: %4d\n", l, *stdev);
-		if(*stdev < STDEV_MAX)
-			break;
-		}
-	*dv_current = abs(2500 - sd) - dvconfig[activeDV].off_current;
-    }
 static int read_program_status()
 	{
 	char bufr[64];

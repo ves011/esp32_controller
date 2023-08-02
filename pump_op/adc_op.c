@@ -82,7 +82,7 @@ static bool IRAM_ATTR adc_timer_callback(void *args)
     adc_raw[0][sample_count] = adc1_get_raw(channel[0]);
     adc_raw[1][sample_count++] = adc1_get_raw(channel[1]);
 #elif ACTIVE_CONTROLLER == WATER_CONTROLLER
-    adc_raw[0][sample_count++] = adc1_get_raw(dvconfig[activeDV].pin_current - 1);
+    adc_raw[0][sample_count++] = adc1_get_raw(PINSENSE_MOT - 1);
 #endif
     if(sample_count >= NR_SAMPLES)
     	timer_pause(ADC_TIMER_GROUP, ADC_TIMER_INDEX);
@@ -237,3 +237,18 @@ int get_pump_adc_values(minmax_t *min, minmax_t *max, int *psensor_mv)
 		return ret;
         }
 
+void get_dv_adc_values(int *dv_mv)
+	{
+	sample_count = 0;
+	*dv_mv = 0;
+	timer_set_counter_value(ADC_TIMER_GROUP, ADC_TIMER_INDEX, 0);
+	timer_start(ADC_TIMER_GROUP, ADC_TIMER_INDEX);
+	while(sample_count < NR_SAMPLES)
+		vTaskDelay(pdMS_TO_TICKS(2));
+	for(int i = 0; i < sample_count; i++)
+		{
+		//adc_mv[0][i] = esp_adc_cal_raw_to_voltage(adc_raw[0][i], &adc1_chars);
+		*dv_mv += esp_adc_cal_raw_to_voltage(adc_raw[0][i], &adc1_chars); //adc_raw[0][i];
+		}
+	*dv_mv /= sample_count;
+	}

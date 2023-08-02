@@ -38,7 +38,7 @@
 static SemaphoreHandle_t pumpop_mutex;
 static SemaphoreHandle_t pumpval_mutex;
 
-static volatile int pump_state, pump_status, pump_pressure_kpa, pump_current, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, psensor_mv;
+static volatile int pump_state, pump_status, pump_pressure_kpa, pump_current, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, psensor_mv, void_run_count;
 static TaskHandle_t pump_task_handle, gpio_pump_cmd_handle;
 
 int pump_pres_stdev;
@@ -184,24 +184,16 @@ int get_pump_state(void)
     	{
     	kpa0_offset = 0;
     	}
-   	if(rw_params(PARAM_READ, PARAM_LIMITS, &plimits) == ESP_OK)
-    	{
-    	pump_min_lim = plimits.min_val;
-		pump_max_lim = plimits.max_val;
-		pump_current_limit = plimits.faultc;
-		pump_pres_stdev = plimits.stdev;
-		overp_time_limit = plimits.overp_lim;
-		}
-	else
-		{
-		pump_min_lim = DEFAULT_PRES_MIN_LIMIT;
-		pump_max_lim = DEFAULT_PRES_MAX_LIMIT;
-		pump_current_limit = DEFAULT_PUMP_CURRENT_LIMIT;
-		pump_pres_stdev = DEFAULT_STDEV;
-		overp_time_limit = DEFAULT_OVERP_TIME_LIMIT;
-		}
-	if(rw_params(PARAM_READ, PARAM_OPERATIONAL, &ps) == ESP_OK)
-		pump_status = ps;
+   	rw_params(PARAM_READ, PARAM_LIMITS, &plimits);
+   	pump_min_lim = plimits.min_val;
+	pump_max_lim = plimits.max_val;
+	pump_current_limit = plimits.faultc;
+	pump_pres_stdev = plimits.stdev;
+	overp_time_limit = plimits.overp_lim;
+	void_run_count = plimits.void_run_count;
+
+	rw_params(PARAM_READ, PARAM_OPERATIONAL, &ps);
+	pump_status = ps;
 	if(!pump_task_handle)
 		{
 		int local_ps_mv;
@@ -246,18 +238,19 @@ int get_pump_state(void)
 running state\t\t= %5d\n \
 Operational state\t\t= %s\n \
 pressure (kPa/mV)        = %5d/%5d\n \
-stdev current			 = %5d\n \
-stdev pressure			 = %5d\n \
+stdev current            = %5d\n \
+stdev pressure           = %5d\n \
 min pressure (kPa)       = %5d\n \
 max pressure (kPa)       = %5d\n \
 fault current limit (mA) = %5d\n \
-0 kPa offset (mV)   	 = %5d\n \
+0 kPa offset (mV)        = %5d\n \
 current (mA)             = %5d\n \
-max STDEV				 = %5d\n \
-timeout P max (sec)		 = %5d\n",
-			pump_state, opstate, pump_pressure_kpa, psensor_mv, stdev_c, stdev_p, pump_min_lim, pump_max_lim, pump_current_limit, kpa0_offset, pump_current, pump_pres_stdev, overp_time_limit);
-		sprintf(msg, "%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d",
-			pump_state, pump_status, pump_current, pump_pressure_kpa, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, pump_pres_stdev, overp_time_limit, stdev_c, stdev_p);
+max STDEV                = %5d\n \
+timeout P max (sec)      = %5d\n \
+short run count          = %5d\n",
+			pump_state, opstate, pump_pressure_kpa, psensor_mv, stdev_c, stdev_p, pump_min_lim, pump_max_lim, pump_current_limit, kpa0_offset, pump_current, pump_pres_stdev, overp_time_limit, void_run_count);
+		sprintf(msg, "%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d\1%d",
+			pump_state, pump_status, pump_current, pump_pressure_kpa, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, pump_pres_stdev, overp_time_limit, stdev_c, stdev_p, void_run_count);
 		}
 	else
 		ESP_LOGI(TAG, "pdsem = %d", pdsem);
@@ -455,7 +448,7 @@ int set_pump_0_offset()
 
 int do_pumpop(int argc, char **argv)
 	{
-	uint32_t minp, maxp, fc, stdev, overpt;
+	uint32_t minp, maxp, fc, stdev, overpt, vrc;
 	int nerrors = arg_parse(argc, argv, (void **)&pumpop_args);
     if (nerrors != 0)
     	{
@@ -485,6 +478,7 @@ int do_pumpop(int argc, char **argv)
     	fc = pump_current_limit;
     	stdev = pump_pres_stdev;
     	overpt = overp_time_limit;
+		vrc = void_run_count;
     	if(pumpop_args.minP->count)
     		{
     		minp = pumpop_args.minP->ival[0];
@@ -498,7 +492,11 @@ int do_pumpop(int argc, char **argv)
     					{
     					stdev = pumpop_args.stdev->ival[0];
     					if(pumpop_args.overpt->count)
+							{
     						overpt = pumpop_args.overpt->ival[0];
+							if(pumpop_args.overpt->count)
+    							vrc = pumpop_args.vrc->ival[0];
+							}
     					}
 
     				}
@@ -512,6 +510,7 @@ int do_pumpop(int argc, char **argv)
     		plimits.faultc = fc;
     		plimits.stdev = stdev;
     		plimits.overp_lim = overpt;
+			plimits.void_run_count = vrc;
     		rw_params(PARAM_WRITE, PARAM_LIMITS, &plimits);
     		get_pump_state();
     		}
@@ -569,11 +568,12 @@ void register_pumpop()
 	pumpop_args.faultC = arg_int0(NULL, NULL, "<max current (mA))>", "at this current pump will stop");
 	pumpop_args.stdev = arg_int0(NULL, NULL, "<#>", "max accepted STDEV");
 	pumpop_args.overpt = arg_int0(NULL, NULL, "<#>", "timeout la presiune maxima");
+	pumpop_args.vrc = arg_int0(NULL, NULL, "<#>", "max nr de cicluri scurte");
 	pumpop_args.end = arg_end(1);
     const esp_console_cmd_t pumpop_cmd =
     	{
         .command = "pump",
-        .help = "pump start|stop|online|offline|set0|set_limits <min_pressure kPa> <max_pressure (kPa)> <fault_current (mA)",
+        .help = "pump start|stop|online|offline|set0|set_limits <min_pressure kPa> <max_pressure (kPa)> <fault_current (mA) <max stdev> <over pressure time limit> <void run count>",
         .hint = NULL,
         .func = &do_pumpop,
         .argtable = &pumpop_args
@@ -593,18 +593,6 @@ void register_pumpop()
 		ESP_LOGE(TAG, "Unable to start pump monitor task");
 		esp_restart();
 		}
-		/*
-	if(pump_status == PUMP_ONLINE)
-		{
-		xTaskCreate(pump_mon_task, "pump task", 8192, NULL, 5, &pump_task_handle);
-		if(!pump_task_handle)
-			{
-			ESP_LOGE(TAG, "Unable to start pump monitor task");
-			esp_restart();
-			}
-		gpio_set_level(PUMP_ONLINE_LED, PIN_ON);
-		}
-		*/
 	}
 
 void pump_mon_task(void *pvParameters)
@@ -672,11 +660,16 @@ void pump_mon_task(void *pvParameters)
 												void_run++;
 											else
 												void_run = 0;
-											if(void_run > 5)
+											if(void_run > void_run_count)
 												{
 												ESP_LOGI(TAG, "void run overflow %d, pump set to offline mode", void_run);
 												void_run = 0;
 												pump_status = PUMP_OFFLINE;
+												gpio_set_level(PUMP_ONLINE_LED, PIN_OFF);
+												int local_ps = pump_status;
+												int ret = rw_params(PARAM_WRITE, PARAM_OPERATIONAL, &local_ps);
+												if(ret != ESP_OK)
+													ESP_LOGI(TAG, "Operational status could not be updated: current value: %d", pump_status);
 												}
 											}
 										}

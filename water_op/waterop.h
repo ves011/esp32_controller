@@ -8,23 +8,39 @@
 #ifndef WATER_OP_WATEROP_H_
 #define WATER_OP_WATEROP_H_
 
+#define ACTUATOR
+#undef DVALVE
+
 #define DV0						0
 #define DV1						1
 #define DVCOUNT					2
 
-#define PINOP_DV1				(5)
-#define PINCURRENT_DV1			(1)
-#define PINLED_DV1				(12)
-#define PINCMD_DV1				(11)
-#define INPUTPINS_DV1			((1ULL << PINCURRENT_DV1) | (1ULL << PINCMD_DV1))
-#define OUTPUTPINS_DV1			((1ULL << PINLED_DV1) | (1ULL << PINOP_DV1))
+#ifdef DVALVE
+	#define PINOP_DV1				(5)
+	#define PINCURRENT_DV1			(1)
+	#define PINLED_DV1				(12)
+	#define PINCMD_DV1				(11)
+	#define INPUTPINS_DV1			((1ULL << PINCURRENT_DV1) | (1ULL << PINCMD_DV1))
+	#define OUTPUTPINS_DV1			((1ULL << PINLED_DV1) | (1ULL << PINOP_DV1))
 
-#define PINOP_DV2				(7)
-#define PINCURRENT_DV2			(4)
-#define PINLED_DV2				(8)
-#define PINCMD_DV2				(3)
-#define INPUTPINS_DV2			((1ULL << PINCURRENT_DV2) | (1ULL << PINCMD_DV2))
-#define OUTPUTPINS_DV2			((1ULL << PINLED_DV2) | (1ULL << PINOP_DV2))
+	#define PINOP_DV2				(7)
+	#define PINCURRENT_DV2			(4)
+	#define PINLED_DV2				(8)
+	#define PINCMD_DV2				(3)
+	#define INPUTPINS_DV2			((1ULL << PINCURRENT_DV2) | (1ULL << PINCMD_DV2))
+	#define OUTPUTPINS_DV2			((1ULL << PINLED_DV2) | (1ULL << PINOP_DV2))
+#endif
+#ifdef ACTUATOR
+	#define PINEN_DV0				(6)
+	#define PINEN_DV1				(7)
+	#define PINMOT_A1				(8)
+	#define PINMOT_B1				(3)
+	#define PINMOT_A2				(12)
+	#define PINMOT_B2				(11)
+	#define PINSENSE_MOT			(4)
+	#define CURRENT_OFF_LIM			20
+	#define CURRENT_OFF_COUNT		3
+#endif
 
 #define WATER_OFF				0
 #define WATER_ON				1
@@ -34,6 +50,7 @@
 #define DVSTATE_FAULT			2
 #define DVOPEN					1
 #define DVCLOSE					0
+#define DVOP_INPROGRESS			2
 #define MINPRES					100
 
 /** Name of the file storing dv program */
