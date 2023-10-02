@@ -35,13 +35,8 @@
 
 #if ACTIVE_CONTROLLER == WATER_CONTROLLER
 
-//extern int adc_raw[2][NR_SAMPLES], adc_mv[2][NR_SAMPLES];
-//extern esp_adc_cal_characteristics_t adc1_chars;
-//extern int sample_count;
-
 static const char *TAG = "WATER OP";
-//static xQueueHandle gpio_evt_queue = NULL;
-static TaskHandle_t water_task_handle; //, gpio_dv_cmd_handle;
+static TaskHandle_t water_task_handle;
 static int watering_status;
 static int pump_present, pstate, pstatus, ppressure, pcurrent, pminlim, pmaxlim;
 static volatile uint64_t last_pump_state, last_pump_mon;
@@ -55,76 +50,16 @@ static int write_program(dvprogram_t *param_val);
 static int start_watering(int idx);
 static int stop_watering(int idx, int reason);
 static int write_status(int idx);
-
+static int get_act_state(int dvnum);
+/*
 typedef struct
 		{
 		uint32_t source;
 		uint32_t val;
 		}msg_t;
+*/
 
-#ifdef DVALVE
-static void IRAM_ATTR gpiodv_isr_handler(void* arg)
-	{
-	msg_t msg;
-    uint32_t gpio_num = (uint32_t) arg;
-    msg.source = gpio_num;
-	xQueueSendFromISR(gpio_evt_queue, &msg, NULL);
-	}
-
-static void config_dv_gpio(void)
-	{
-	gpio_config_t io_conf;
-	io_conf.intr_type = GPIO_INTR_DISABLE;
-	io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = OUTPUTPINS_DV1 | OUTPUTPINS_DV2;
-    io_conf.pull_down_en = 0;
-    io_conf.pull_up_en = 0;
-    gpio_set_drive_capability(PINOP_DV1, GPIO_DRIVE_CAP_3);
-    gpio_set_drive_capability(PINLED_DV1, GPIO_DRIVE_CAP_2);
-    gpio_set_drive_capability(PINOP_DV2, GPIO_DRIVE_CAP_3);
-    gpio_set_drive_capability(PINLED_DV2, GPIO_DRIVE_CAP_2);
-    gpio_config(&io_conf);
-    gpio_set_level(PINOP_DV1, 0);
-    gpio_set_level(PINLED_DV1, 0);
-    gpio_set_level(PINOP_DV2, 0);
-    gpio_set_level(PINLED_DV2, 0);
-
-    io_conf.intr_type = GPIO_INTR_ANYEDGE;
-	io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = (1ULL << PINCMD_DV1 | 1ULL << PINCMD_DV2);
-    io_conf.pull_down_en = 0;
-    io_conf.pull_up_en = 1;
-    gpio_config(&io_conf);
-
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(PINCMD_DV1, gpiodv_isr_handler, (void*) PINCMD_DV1);
-    gpio_isr_handler_add(PINCMD_DV2, gpiodv_isr_handler, (void*) PINCMD_DV2);
-	}
-void open_dv(int dvnum)
-	{
-	if(dvnum >= 0 && dvnum < DVCOUNT)
-		{
-		gpio_set_level(dvconfig[dvnum].pin_op, 1);
-		activeDV =  dvconfig[dvnum].dvno;
-		dvconfig[dvnum].state = DVOPEN;
-		}
-	else
-		ESP_LOGI(TAG, "DV %d out of range - valid is 0 or 1", dvnum);
-	}
-void close_dv(int dvnum)
-	{
-	if(dvnum >= 0 && dvnum < DVCOUNT)
-		{
-		gpio_set_level(dvconfig[dvnum].pin_op, 0);
-		activeDV =  -1;
-		dvconfig[dvnum].state = DVCLOSE;
-		}
-	else
-		ESP_LOGI(TAG, "DV %d out of range - valid is 0 or 1", dvnum);
-	}
-#endif
-#ifdef ACTUATOR
-void open_dv(int dvnum)
+static int open_dv(int dvnum)
 	{
 	int dv_current, op_start = 0;
 	int coff = 0, i;
@@ -140,17 +75,12 @@ void open_dv(int dvnum)
 		get_dv_adc_values(&dv_current);
 		//ESP_LOGI(TAG, "sense voltage: %d (%04x)", dv_current, dv_current);
 		if(dv_current < CURRENT_OFF_LIM)
-			{
-			if(i >= 5 && op_start == 1)
-				coff++;
-			else
-				{
-				coff = 0;
-				break;
-				}
-			}
+			coff++;
 		else
+			{
+			coff = 0;
 			op_start = 1;
+			}
 		if(coff >= CURRENT_OFF_COUNT)
 			break;
 		}
@@ -158,19 +88,28 @@ void open_dv(int dvnum)
 	gpio_set_level(PINMOT_B1, PIN_OFF);
 	gpio_set_level(PINEN_DV0, PIN_OFF);
 	gpio_set_level(PINEN_DV1, PIN_OFF);
-	if(coff == 0) // operation aborted
+	if(op_start == 0)
+		{
+		ESP_LOGI(TAG, "DV%d already in DVOPEN state", dvnum);
+		activeDV =  dvconfig[dvnum].dvno;
+		dvconfig[dvnum].state = DVOPEN;
+		return ESP_OK;
+		}
+	if(i >= 30) // operation aborted
 		{
 		ESP_LOGI(TAG, "open DV%d failed %d %d", dvnum, i, dv_current);
-		activeDV = -1;
+		return OP_ABORTED;
 		}
 	else
 		{
 		ESP_LOGI(TAG, "open DV%d OK %d %d", dvnum, i, dv_current);
 		activeDV =  dvconfig[dvnum].dvno;
 		dvconfig[dvnum].state = DVOPEN;
+		return ESP_OK;
 		}
+	return ESP_OK;
 	}
-void close_dv(int dvnum)
+static int close_dv(int dvnum)
 	{
 	int dv_current, op_start = 0;
 	int coff = 0, i;
@@ -186,17 +125,13 @@ void close_dv(int dvnum)
 		get_dv_adc_values(&dv_current);
 		//ESP_LOGI(TAG, "sense voltage: %d (%04x)", dv_current, dv_current);
 		if(dv_current < CURRENT_OFF_LIM)
-			{
-			if(i >= 5 && op_start == 1)
-				coff++;
-			else
-				{
-				coff = 0;
-				break;
-				}
-			}
+			coff++;
 		else
+			{
 			op_start = 1;
+			coff = 0;
+			}
+
 		if(coff >= CURRENT_OFF_COUNT)
 			break;
 		}
@@ -204,15 +139,24 @@ void close_dv(int dvnum)
 	gpio_set_level(PINMOT_B1, PIN_OFF);
 	gpio_set_level(PINEN_DV0, PIN_OFF);
 	gpio_set_level(PINEN_DV1, PIN_OFF);
-	if(coff == 0) // operation aborted
+	if(op_start == 0)
+		{
+		ESP_LOGI(TAG, "DV%d already in closed state", dvnum);
+		activeDV =  -1;
+		dvconfig[dvnum].state = DVCLOSE;
+		return ESP_OK;
+		}
+	if(i >= 30) // operation aborted
 		{
 		ESP_LOGI(TAG, "close DV%d failed %d %d", dvnum, i, dv_current);
+		return OP_ABORTED;
 		}
 	else
 		{
 		ESP_LOGI(TAG, "close DV%d OK %d %d", dvnum, i, dv_current);
 		activeDV =  -1;
 		dvconfig[dvnum].state = DVCLOSE;
+		return ESP_OK;
 		}
 	}
 static void config_dv_gpio(void)
@@ -229,7 +173,7 @@ static void config_dv_gpio(void)
     gpio_set_level(PINMOT_A1, PIN_OFF);
     gpio_set_level(PINMOT_B1, PIN_OFF);
 	}
-#endif
+
 void parse_devstr(int argc, char **argv)
 	{
 	char mqttbuf[20];
@@ -348,12 +292,14 @@ int do_dvop(int argc, char **argv)
     	}
     else if(strcmp(waterop_args.op->sval[0], "state") == 0)
     	{
+    	int st;
     	ESP_LOGI(TAG, "Watering status: %-d / activeDV: %d", watering_status, activeDV);
     	read_program(&dv_program);
     	buf[0] = 0;
     	for(int i = 0; i < DVCOUNT; i++)
 			{
-			ESP_LOGI(TAG, "DV%d state: %d", dvconfig[i].dvno, dvconfig[i].state);
+			st = get_act_state(dvconfig[i].dvno);
+			ESP_LOGI(TAG, "DV%d state: %d / %d", dvconfig[i].dvno, dvconfig[i].state, st);
 			sprintf(bufs, "%d\1%d\1", dvconfig[i].dvno, dvconfig[i].state);
 			strcat(buf, bufs);
 			}
@@ -580,55 +526,51 @@ void water_mon_task(void *pvParameters)
 			}
 		}
 	}
-	/*
-static void get_dv_state()
+
+static int get_act_state(int dvnum)
 	{
-	int saved_state, saved_actdv, dv_current, stdev;
-	saved_actdv = activeDV;
-	//test both dvs
-	for(int i = 0; i < DVCOUNT; i++)
+	char op[20];
+	int i, dv_current, c_med, ret_state;
+	//try close
+	gpio_set_level(PINMOT_A1, PIN_OFF);
+	gpio_set_level(PINMOT_B1, PIN_ON);
+	strcpy(op, "close");
+
+	if(dvnum == 0)
+		gpio_set_level(PINEN_DV0, PIN_ON);
+	else if(dvnum == 1)
+		gpio_set_level(PINEN_DV1, PIN_ON);
+	vTaskDelay(500 / portTICK_PERIOD_MS);
+	c_med = 0;
+	for(i = 0; i < 3; i++)
 		{
-		activeDV = i;
-		saved_state = dvconfig[activeDV].state;
-		// 1. get current for dv off
-		gpio_set_level(dvconfig[activeDV].pin_op, WATER_OFF);
-		dvconfig[activeDV].off_current = 0;
-		get_dv_current(&dv_current, &stdev);
-		if(dv_current == 0) // cannot take measurement with good stdev
-			esp_restart();
-		dvconfig[activeDV].off_current = dv_current;
-		gpio_set_level(dvconfig[activeDV].pin_op, WATER_ON);
-		get_dv_current(&dv_current, &stdev);
-		ESP_LOGI(TAG, "\n--> %5d: %5d / %5d\n", activeDV, dvconfig[activeDV].off_current, dv_current);
-		if(dv_current == 0) // cannot take measurement with good stdev
-			esp_restart();
-		if(dv_current <= 10 || dv_current > 100) //error when dv is on
-			dvconfig[activeDV].status = DVSTATE_FAULT;
-		else
-			dvconfig[activeDV].status = DVSTATE_OK;
-		gpio_set_level(dvconfig[activeDV].pin_op, saved_state);
+		get_dv_adc_values(&dv_current);
+		ESP_LOGI(TAG, "DV%d, %s %d", dvnum, op, dv_current);
+		c_med += dv_current;
+		vTaskDelay(100 / portTICK_PERIOD_MS);
 		}
-	activeDV = saved_actdv;
+	gpio_set_level(PINMOT_A1, PIN_OFF);
+	gpio_set_level(PINMOT_B1, PIN_OFF);
+	gpio_set_level(PINEN_DV0, PIN_OFF);
+	gpio_set_level(PINEN_DV1, PIN_OFF);
+	c_med /= 3;
+	if(c_med < CURRENT_OFF_LIM) // DV already closed
+		ret_state = DVCLOSE;
+	else // DV OPEN
+		{
+		ret_state = DVOPEN;
+		//revert op
+		open_dv(dvnum);
+		}
+	return ret_state;
 	}
-*/
+
 void register_waterop()
 	{
 	water_task_handle = NULL;
-#ifdef DVALVE
-	dvconfig[0].pin_cmd = PINCMD_DV1;
-	dvconfig[0].pin_current = PINCURRENT_DV1;
-	dvconfig[0].pin_led = PINLED_DV1;
-	dvconfig[0].pin_op = PINOP_DV1;
-
-	dvconfig[1].pin_cmd = PINCMD_DV2;
-	dvconfig[1].pin_current = PINCURRENT_DV2;
-	dvconfig[1].pin_led = PINLED_DV2;
-	dvconfig[1].pin_op = PINOP_DV2;
-#endif
-#ifdef ACTUATOR
 	dvconfig[0].pin_current = PINSENSE_MOT;
 	dvconfig[1].pin_current = PINSENSE_MOT;
-#endif
+
 	config_dv_gpio();
 	adc_calibration_init();
 	config_adc_timer();
@@ -708,6 +650,7 @@ static int read_program_status()
 		}
 	return ret;
 	}
+
 static int read_program(dvprogram_t *param_val)
 	{
 	char buf[64];
@@ -821,105 +764,110 @@ static int write_status(int idx)
 static int start_watering(int idx)
 	{
 	int lc, retry_start = 0, ret = START_WATERING_ERROR;
+	int dvop;
 	uint64_t ltime;
-	if(dv_program.p[idx].cs == NOT_STARTED) //open DV[idx]
+
+	close_dv(0);
+	close_dv(1);
+	//ensure both DVs are in DVCLOSED state
+	/*
+	if(get_act_state(0) == DVOPEN)
 		{
-		while(retry_start < RETRY_OP_WATERING)
+		ESP_LOGI(TAG, "DV0 in DVOPEN state -> closing");
+		if(close_dv(0) != ESP_OK)
+			return ret;
+		}
+	if(get_act_state(1) == DVOPEN)
+		{
+		ESP_LOGI(TAG, "DV1 in DVOPEN state -> closing");
+		if(close_dv(1)!= ESP_OK)
+			return ret;
+		}
+	*/
+	//set pump online
+	retry_start = 0;
+	while (retry_start < RETRY_OP_WATERING)
+		{
+		ESP_LOGI(TAG, "Start watering on DV%d - set pump online / try %d /last_pump_state: %llu", dv_program.p[idx].dv, retry_start, last_pump_state);
+		publish_topic(PUMP_CMD_TOPIC, "online", 1, 0);
+		lc = 0;
+		ltime = esp_timer_get_time();
+		while(last_pump_state <= ltime) //wait 10 sec for pump to be online and pressure above pmaxlim
 			{
-			ESP_LOGI(TAG, "try to start watering on DV%d / try %d /last_pump_state: %llu", dv_program.p[idx].dv, retry_start, last_pump_state);
-			lc = 0;
+			vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec to check pressure status
+			publish_topic(PUMP_CMD_TOPIC, "state", 1, 0);
+			lc++;
+			if(lc > 10)
+				break;
+			}
+		if(lc > 10)
+			{
+			ESP_LOGI(TAG, "No response from pump #1");
+			}
+		else
+			{
+			if(pstatus == PUMP_ONLINE && ppressure > pmaxlim)
+				break;
+			else
+				ESP_LOGI(TAG, "Pump not online or low pressure");
+			}
+		retry_start++;
+		}
+	if(retry_start < RETRY_OP_WATERING) // pump condition OK
+		{
+		dvop = open_dv(dv_program.p[idx].dv);
+		if(dvop == ESP_OK)
+			{
+			ESP_LOGI(TAG, "open DV%d OK", dv_program.p[idx].dv);
+			//now wait for pressure to fall between max and min limit
 			ltime = esp_timer_get_time();
-			while(last_pump_state <= ltime) //wait 5 sec for pump to be online and pressure above pmaxlim
+			lc = 0;
+			do  //wait 10 sec for pump monitor report
 				{
-				publish_topic(PUMP_CMD_TOPIC, "online", 1, 0);
-				vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec to check pressure status
-				publish_topic(PUMP_CMD_TOPIC, "state", 1, 0);
+				vTaskDelay(1000 / portTICK_PERIOD_MS);
 				lc++;
 				if(lc > 10)
 					break;
-				vTaskDelay(500 / portTICK_PERIOD_MS);
+				ESP_LOGI(TAG, "ltime %llu, last_pump_mon %llu", ltime, last_pump_mon);
 				}
-			if(lc >= 10) // no response from pump
+			while(last_pump_mon <= ltime);
+			if(lc <= 10)
 				{
-				retry_start++;
-				ret = NO_PUMP_RESPONSE;
-				if(retry_start >= RETRY_OP_WATERING)
-					break;
-				ESP_LOGI(TAG, "No response from pump #1");
-				continue;
-				}
-			if(pstatus == PUMP_ONLINE && ppressure > pmaxlim)
-				{
-				ESP_LOGI(TAG, "start1 ok: %llu", last_pump_state);
-				open_dv(dv_program.p[idx].dv);
-				vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec to check pressure status
-				ltime = esp_timer_get_time();
-				lc = 0;
-				while(last_pump_state <= ltime) //wait 5 sec for pump monitor report
+				if(ppressure > pmaxlim)
 					{
-					publish_topic(PUMP_CMD_TOPIC, "state", 1, 0);
-					lc++;
-					if(lc > 10)
-						break;
-					vTaskDelay(500 / portTICK_PERIOD_MS);
+					ESP_LOGI(TAG, "Error! DV%d - pump pressure too high: %d", dv_program.p[idx].dv, ppressure);
 					}
-				if(lc > 10) // no response from pump
+				else if(ppressure < MINPRES)
 					{
-					close_dv(dv_program.p[idx].dv);
-					retry_start++;
-					ret = NO_PUMP_RESPONSE;
-					if(retry_start >= RETRY_OP_WATERING)
-						break;
-					ESP_LOGI(TAG, "No response from pump #2");
-					continue;
+					ESP_LOGI(TAG, "Error! pump pressure too low: %d", ppressure);
 					}
-				if(ppressure < pmaxlim  && ppressure > MINPRES)
+				else
 					{
-					ESP_LOGI(TAG, "start2 ok: %llu", last_pump_state);
 					dv_program.p[idx].cs = IN_PROGRESS;
 					watering_status = WATER_ON;
 					ESP_LOGI(TAG, "Watering program for DV%d started rs:%d", dv_program.p[idx].dv, retry_start);
 					activeDV = dv_program.p[idx].dv;
 					ret = 0;
-					break;
-					}
-				else
-					{
-					if(ppressure > pmaxlim)
-						{
-						ESP_LOGI(TAG, "Error! DV%d - cannot open rs:%d", dv_program.p[idx].dv, retry_start);
-						close_dv(dv_program.p[idx].dv);
-						publish_topic(PUMP_CMD_TOPIC, "offline", 1, 0);
-						ret = DV_ERROR;
-						}
-					else if(ppressure < MINPRES)
-						{
-						ESP_LOGI(TAG, "Error! DV%d - no water pressure rs:%d", dv_program.p[idx].dv, retry_start);
-						close_dv(dv_program.p[idx].dv);
-						publish_topic(PUMP_CMD_TOPIC, "offline", 1, 0);
-						ret = PUMP_PRESSURE_LOW;
-						}
-
-					retry_start++;
-					if(retry_start >= RETRY_OP_WATERING)
-						break;
-					continue;
 					}
 				}
 			else
 				{
-				ESP_LOGI(TAG, "Pump not online or low pressure %d / %d rs:%d", pstatus, ppressure, retry_start);
-				retry_start++;
-				ret = PUMP_WRONG_STATE;
-				if(retry_start >= RETRY_OP_WATERING)
-					break;
+				ESP_LOGI(TAG, "No response from pump #2");
 				}
 			}
+		else
+			{
+			ESP_LOGI(TAG, "Error open! DV%d: %d", dv_program.p[idx].dv, dvop);
+			//try to close back the DV
+			dvop = close_dv(dv_program.p[idx].dv);
+			ESP_LOGI(TAG, "Closing DV%d because error on open / close err: %d", dv_program.p[idx].dv, dvop);
+			}
+
 		}
 	if(ret > 0) //last try before exit
 		{
 		publish_topic(PUMP_CMD_TOPIC, "offline", 1, 0);
-		close_dv(dv_program.p[idx].dv);
+		dvop = close_dv(dv_program.p[idx].dv);
 		}
 	return ret;
 	}
@@ -957,7 +905,7 @@ static int stop_watering(int idx, int reason)
 					}
 				continue;
 				}
-			if(ppressure >= pmaxlim) // dv closed successfully
+			if(ppressure >= pminlim) // dv closed successfully
 				{
 				ESP_LOGI(TAG, "close1 ok %llu", last_pump_state);
 				ltime = esp_timer_get_time();

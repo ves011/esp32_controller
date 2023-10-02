@@ -257,7 +257,7 @@ short run count          = %5d\n",
 	if(pdsem == 2)
 		xSemaphoreGive(pumpval_mutex);
 	if(pdsem)
-		publish_state(msg, 0, 0);
+		publish_state(msg, 1, 0);
     return ret;
     }
 
@@ -706,7 +706,7 @@ void pump_mon_task(void *pvParameters)
 						pump_pressure_kpa != saved_pump_pressure_kpa)
 				{
 				sprintf(msg, "%d\1%d\1%d\1%d\1%d\1%d", pump_state, pump_status, pump_current, pump_pressure_kpa, stdev_c, stdev_p);
-				publish_monitor(msg, 0, 0);
+				publish_monitor(msg, 1, 0);
 				ESP_LOGI(TAG, "Pump state running:%d, pressure:%d(kPa), current:%d(mA), stdev p:%d, loop:%d", pump_state, pump_pressure_kpa, pump_current, stdev_p, loop);
 				saved_pump_state = pump_state;
 				saved_pump_status = pump_status;

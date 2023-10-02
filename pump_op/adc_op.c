@@ -37,10 +37,6 @@ int adc_mv[2][NR_SAMPLES];
 
 #if ACTIVE_CONTROLLER == PUMP_CONTROLLER
 	static adc_channel_t channel[] = {CURRENT_ADC_CHANNEL, SENSOR_ADC_CHANNEL};
-#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
-	extern dvconfig_t dvconfig[2];
-	extern int activeDV;
-//	static adc_channel_t channel = dvconfig[0].pin_current - 1;
 #endif
 esp_adc_cal_characteristics_t adc1_chars;
 static bool cali_enable;

@@ -8,31 +8,16 @@
 #ifndef WATER_OP_WATEROP_H_
 #define WATER_OP_WATEROP_H_
 
-#define ACTUATOR
-#undef DVALVE
-
 #define DV0						0
 #define DV1						1
 #define DVCOUNT					2
 
-#ifdef DVALVE
-	#define PINOP_DV1				(5)
-	#define PINCURRENT_DV1			(1)
-	#define PINLED_DV1				(12)
-	#define PINCMD_DV1				(11)
-	#define INPUTPINS_DV1			((1ULL << PINCURRENT_DV1) | (1ULL << PINCMD_DV1))
-	#define OUTPUTPINS_DV1			((1ULL << PINLED_DV1) | (1ULL << PINOP_DV1))
-
-	#define PINOP_DV2				(7)
-	#define PINCURRENT_DV2			(4)
-	#define PINLED_DV2				(8)
-	#define PINCMD_DV2				(3)
-	#define INPUTPINS_DV2			((1ULL << PINCURRENT_DV2) | (1ULL << PINCMD_DV2))
-	#define OUTPUTPINS_DV2			((1ULL << PINLED_DV2) | (1ULL << PINOP_DV2))
-#endif
-#ifdef ACTUATOR
 	#define PINEN_DV0				(6)
 	#define PINEN_DV1				(7)
+	/* A1 ON 	/ B1 OFF 	--> open
+	 * A1 OFF 	/ B1 ON 	--> close
+	 * A1 OFF 	/ B1 OFF 	--> inactive
+	 */
 	#define PINMOT_A1				(8)
 	#define PINMOT_B1				(3)
 	#define PINMOT_A2				(12)
@@ -40,7 +25,7 @@
 	#define PINSENSE_MOT			(4)
 	#define CURRENT_OFF_LIM			20
 	#define CURRENT_OFF_COUNT		3
-#endif
+
 
 #define WATER_OFF				0
 #define WATER_ON				1
@@ -81,6 +66,9 @@
 #define PUMP_NO_RESPONSE		12
 #define DV_OPEN_FAIL			13
 #define DV_CLOSE_FAIL			14
+#define GET_STATE_NOT_PERMITED	15
+#define GET_STATE_ERROR			16
+#define OP_ABORTED				17
 
 
 #define WATER_PUMP_DESC			"pump01"
@@ -95,12 +83,12 @@
 #define STATE_W					"state"
 #define STATE_P					"program"
 
+
+
 typedef struct
 	{
 	uint8_t dvno;
-	uint8_t pin_op;
 	uint8_t pin_current;
-	uint8_t pin_cmd;
 	uint8_t pin_led;
 	uint8_t state;
 	uint8_t status;
