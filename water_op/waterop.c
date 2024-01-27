@@ -23,6 +23,7 @@
 #include "esp_adc_cal.h"
 
 #include "esp_log.h"
+#include "sys/stat.h"
 
 #include "common_defines.h"
 #include "mqtt_client.h"
@@ -34,6 +35,14 @@
 #include "external_defs.h"
 
 #if ACTIVE_CONTROLLER == WATER_CONTROLLER
+
+static struct {
+    struct arg_str *op;
+    struct arg_int *dv;
+    struct arg_str *start;
+    struct arg_str *stop;
+    struct arg_end *end;
+} waterop_args;
 
 static const char *TAG = "WATER OP";
 static TaskHandle_t water_task_handle;
@@ -304,7 +313,9 @@ int do_dvop(int argc, char **argv)
 			strcat(buf, bufs);
 			}
     	if(watering_status == WATER_ON)
+    		{
     		ESP_LOGI(TAG, "Watering ON on DV%d started @%02d:%02d", activeDV, dv_program.p[activeDV].starth, dv_program.p[activeDV].startm);
+    		}
 		/*for(int i = 0; i < DVCOUNT; i++)
 			{
 			if(dv_program.p[i].cs == NOT_STARTED)

@@ -41,13 +41,16 @@
 #define PUMP_FAULT_LED			(3)	//j4/7
 #define PUMP_ONLINE_CMD			(7)	//j5/7
 
+/*
 #define ADC_TIMER_GROUP			TIMER_GROUP_1
 #define ADC_TIMER_INDEX			TIMER_1
 
 #define CMD_TIMER_GROUP			TIMER_GROUP_1
 #define CMD_TIMER_INDEX			TIMER_0
+*/
+
 /** How long(msec) the button has to be pressed  to send the command*/
-#define PUSH_TIME_MS			(3000)
+#define PUSH_TIME_US			(3000000)
 
 /** under this value the pump is OFF */
 #define PUMP_CURRENT_OFF		300
@@ -66,21 +69,6 @@
 #define DEFAULT_OVERP_TIME_LIMIT	10
 #define DEFAULT_VOID_RUN_COUNT		20
 
-
-/**
- * @brief pump command and parameters
- */
-struct
-	{
-    struct arg_str *op;
-    struct arg_int *minP;
-    struct arg_int *maxP;
-    struct arg_int *faultC;
-    struct arg_int *stdev;
-    struct arg_int *overpt;
-	struct arg_int *vrc;
-    struct arg_end *end;
-	} pumpop_args;
 
 typedef struct
 	{

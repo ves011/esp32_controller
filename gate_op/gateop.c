@@ -45,7 +45,7 @@ static uint32_t gate_state;
 static uint32_t gate_moving_state;
 static uint32_t op_response;
 static uint32_t open_count, close_count;
-static xQueueHandle gate_evt_queue;
+static QueueHandle_t gate_evt_queue;
 
 portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -225,9 +225,9 @@ int close_gate()
 int get_gate_state()
 	{
 	char msg[100];
-	ESP_LOGI(TAG, "\n gate_state = %d / gate_moving_state = %d / pulse_count = %d / cmd_state = %d / signal_value = %d\n",
+	ESP_LOGI(TAG, "\n gate_state = %lu / gate_moving_state = %lu / pulse_count = %d / cmd_state = %lu / signal_value = %lu\n",
 		gate_state, gate_moving_state, pulse_count_input, cmd_state, signal_value);
-	sprintf(msg, "%d\1%d\1%d\1%d\1%d",
+	sprintf(msg, "%lu\1%lu\1%d\1%lu\1%lu",
 		gate_state, gate_moving_state,  pulse_count_input, cmd_state, signal_value);
 	publish_state(msg, 0, 0);
 	return 1;
@@ -296,7 +296,7 @@ void gate_task()
 					//ESP_LOGI(TAG, "Illegal CMD_COMPLETE sate %4d", gevt.pulse_count);
 					gate_moving_state = MOVING_STATE;
 					gate_state = STATE_OPENP;
-					ESP_LOGI(TAG, "OP triggered by remote radio %4d", gevt.pulse_count);
+					ESP_LOGI(TAG, "OP triggered by remote radio %4lu", gevt.pulse_count);
 					}
 				else
 					{
@@ -318,7 +318,7 @@ void gate_task()
 				saved_gate_state = gate_state;
 				saved_gate_moving_state = gate_moving_state;
 				saved_cmd_state = cmd_state;
-				sprintf(msg, "%d\1%d\1%d\1%d\1%d",
+				sprintf(msg, "%lu\1%lu\1%d\1%lu\1%lu",
 							gate_state, gate_moving_state,  pulse_count_input, cmd_state, signal_value);
 				publish_state(msg, 0, 0);
 				}

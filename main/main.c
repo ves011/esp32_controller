@@ -12,7 +12,8 @@
 #include "freertos/task.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
-#include "esp_spi_flash.h"
+//#include "esp_spi_flash.h"
+#include "spi_flash_mmap.h"
 #include "esp_spiffs.h"
 #include "esp_vfs_dev.h"
 #include "esp_vfs_fat.h"
@@ -27,7 +28,7 @@
 #include "esp_netif.h"
 #include "lwip/sockets.h"
 #include "esp_pm.h"
-#include "esp32/clk.h"
+//#include "esp32/clk.h"
 #include "common_defines.h"
 #include "cmd_wifi.h"
 #include "cmd_system.h"
@@ -44,8 +45,8 @@
 #include "westaop.h"
 #include "waterop.h"
 
-#include "driver/adc.h"
-#include "esp_adc_cal.h"
+//#include "driver/adc.h"
+//#include "esp_adc_cal.h"
 #include "external_defs.h"
 
 #define TAG "ctrl_dev"
@@ -55,7 +56,7 @@
 
 #include "wifi_credentials.h"
 
-TaskHandle_t ntp_sync_task_handle;
+//TaskHandle_t ntp_sync_task_handle;
 
 int console_state;
 int restart_in_progress;

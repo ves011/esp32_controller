@@ -109,13 +109,6 @@ typedef struct
 			} p[DVCOUNT];
 		} dvprogram_t;
 
-struct {
-    struct arg_str *op;
-    struct arg_int *dv;
-    struct arg_str *start;
-    struct arg_str *stop;
-    struct arg_end *end;
-} waterop_args;
 
 int do_dvop(int argc, char **argv);
 void register_waterop(void);

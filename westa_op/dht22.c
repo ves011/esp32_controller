@@ -154,7 +154,7 @@ int get_dht_data(dht_data_t * dhtd)
 		if(ret == ESP_OK)
 			{
 			ret = ESP_FAIL;
-			ets_delay_us(1000);
+			usleep(1000);
 			gpio_set_level(DHT_DATA_PIN, 1);
 			rmt_item32_t *symbol = (rmt_item32_t *)xRingbufferReceive(ringbuf_handle, &n_symbol, 10);
 			rmt_rx_stop(DHT_RMT_CHANNEL);
@@ -191,7 +191,7 @@ int get_dht_status()
 		if(ret == ESP_OK)
 			{
 			ret = ESP_FAIL;
-			ets_delay_us(1000);
+			usleep(1000);
 			gpio_set_level(DHT_DATA_PIN, 1);
 			rmt_item32_t *symbol = (rmt_item32_t *)xRingbufferReceive(ringbuf_handle, &n_symbol, 10);
 			rmt_rx_stop(DHT_RMT_CHANNEL);

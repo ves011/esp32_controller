@@ -46,6 +46,15 @@
 #define CAL_A2		603010
 #define CAL_B2		694
 */
+
+typedef struct
+	{
+	uint8_t source;
+	uint8_t step;
+	uint32_t val;
+	uint64_t ts;
+	} adc_msg_t;
+
 typedef struct
     {
     uint32_t mv;
@@ -55,7 +64,8 @@ typedef struct
 extern int stdev_c, stdev_p;
 
 void init_adc(void);
-void adc_calibration_init(void);
+//void adc_calibration_init(void);
+void adc_init5(void);
 void config_adc_timer(void);
 int get_pump_adc_values(minmax_t *min, minmax_t *max, int *psensor_mv);
 void get_dv_adc_values(int *dv_mv);
