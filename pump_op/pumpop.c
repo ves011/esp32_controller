@@ -29,8 +29,8 @@
 #include "hal/adc_types.h"
 //#include "driver/timer.h"
 #include "driver/gptimer.h"
+#include "gpios.h"
 #include "mqtt_ctrl.h"
-//#include "esp_adc_cal.h"
 #include "utils.h"
 #include "adc_op.h"
 #include "pumpop.h"
@@ -38,7 +38,9 @@
 #if ACTIVE_CONTROLLER == PUMP_CONTROLLER
 static SemaphoreHandle_t pumpop_mutex;
 
-static volatile int pump_state, pump_status, pump_pressure_kpa, pump_current, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit, psensor_mv, void_run_count;
+int pump_pressure_kpa;
+int pump_state, pump_status, pump_current, kpa0_offset, pump_min_lim, pump_max_lim, pump_current_limit;
+static int psensor_mv, void_run_count;
 static TaskHandle_t pump_task_handle, gpio_pump_cmd_handle;
 
 int pump_pres_stdev;
@@ -52,12 +54,6 @@ static QueueHandle_t pump_cmd_queue = NULL;
 
 static uint32_t testModeCurrent;
 uint32_t loop;
-
-typedef struct
-		{
-		uint32_t source;
-		uint32_t val;
-		}msg_t;
 
 		/**
  * @brief pump command and parameters
@@ -188,7 +184,7 @@ static void config_pump_gpio(void)
     io_conf.pull_up_en = 1;
     gpio_config(&io_conf);
 
-    gpio_install_isr_service(0);
+    //gpio_install_isr_service(0);
     gpio_isr_handler_add(PUMP_ONLINE_CMD, gpio_isr_handler, (void*) PUMP_ONLINE_CMD);
 
     //gpio_set_level(PUMP_ONLINE_CMD, PIN_ON);
@@ -577,13 +573,10 @@ int do_pumpop(int argc, char **argv)
 
 void register_pumpop()
 	{
-	pump_cmd_queue = xQueueCreate(10, sizeof(uint32_t));
+	pump_cmd_queue = xQueueCreate(10, sizeof(msg_t));
 	config_pump_gpio();
 	config_cmd_timer();
 
-	//adc_calibration_init();
-	adc_init5();
-	config_adc_timer();
 	testModeCurrent = 0;
 
 	pump_task_handle = NULL;
@@ -746,7 +739,7 @@ void pump_mon_task(void *pvParameters)
 				{
 				sprintf(msg, "%d\1%d\1%d\1%d\1%d\1%d", pump_state, pump_status, pump_current, pump_pressure_kpa, stdev_c, stdev_p);
 				publish_monitor(msg, 1, 0);
-				ESP_LOGI(TAG, "Pump state running:%d, pressure:%d(kPa), current:%d(mA), stdev p:%d, loop:%lu", pump_state, pump_pressure_kpa, pump_current, stdev_p, loop);
+				//ESP_LOGI(TAG, "Pump state running:%d, pressure:%d(kPa), current:%d(mA), stdev p:%d, loop:%lu", pump_state, pump_pressure_kpa, pump_current, stdev_p, loop);
 				saved_pump_state = pump_state;
 				saved_pump_status = pump_status;
 				saved_pump_current = pump_current;

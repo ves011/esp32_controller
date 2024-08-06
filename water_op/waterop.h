@@ -11,18 +11,21 @@
 #define DV0						0
 #define DV1						1
 #define DVCOUNT					2
-
+/*
 	#define PINEN_DV0				(6)
 	#define PINEN_DV1				(7)
+*/
 	/* A1 ON 	/ B1 OFF 	--> open
 	 * A1 OFF 	/ B1 ON 	--> close
 	 * A1 OFF 	/ B1 OFF 	--> inactive
 	 */
+/*
 	#define PINMOT_A1				(8)
 	#define PINMOT_B1				(3)
-	#define PINMOT_A2				(12)
-	#define PINMOT_B2				(11)
+	//#define PINMOT_A2				(12)
+	//#define PINMOT_B2				(11)
 	#define PINSENSE_MOT			(4)
+*/
 	#define CURRENT_OFF_LIM			20
 	#define CURRENT_OFF_COUNT		3
 

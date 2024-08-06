@@ -12,42 +12,16 @@
 #ifndef PUMP_OP_PUMPOP_H_
 #define PUMP_OP_PUMPOP_H_
 
-/**
- * @defgroup  ESP32_GPIO pump ctrl GPIO
- *
- * @{
- */
- /** Pressure sensor */
-#define SENSOR_PIN				(5)	//j5/5
- /** Pressure sensor ADC channel = SENSOR_PIN -1*/
-#define	SENSOR_ADC_CHANNEL		(4)
- /** ACS712 current sensor */
-#define CURRENT_PIN				(4)	//j5/6
+/** Pressure sensor ADC channel = SENSOR_PIN -1*/
+#define	SENSOR_ADC_CHANNEL		SENSOR_PIN - 1
  /** ACS712 current sensor ADC channel = CURRENT_PIN - 1*/
-#define CURRENT_ADC_CHANNEL		(3)
- /** Pump ON/OF control pin */
-#define PUMP_ONOFF_PIN			(6)	//j5/8
-/** @} */
+#define CURRENT_ADC_CHANNEL		CURRENT_PIN - 1
 
 	#define PUMP_ON					(1)
 	#define PUMP_OFF				(0)
 	#define PUMP_FAULT				(4)
 	#define PUMP_ONLINE				(2)
 	#define PUMP_OFFLINE			(3)
-
-#define PUMP_ONOFF_LED			(1)	//j5/4
-#define PUMP_ONLINE_LED			(8)	//j4/8
-
-#define PUMP_FAULT_LED			(3)	//j4/7
-#define PUMP_ONLINE_CMD			(7)	//j5/7
-
-/*
-#define ADC_TIMER_GROUP			TIMER_GROUP_1
-#define ADC_TIMER_INDEX			TIMER_1
-
-#define CMD_TIMER_GROUP			TIMER_GROUP_1
-#define CMD_TIMER_INDEX			TIMER_0
-*/
 
 /** How long(msec) the button has to be pressed  to send the command*/
 #define PUSH_TIME_US			(3000000)

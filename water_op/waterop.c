@@ -7,25 +7,23 @@
 
 #include <stdio.h>
 #include <string.h>
-#include "driver/pcnt.h"
-#include "driver/timer.h"
-
 #include "sdkconfig.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
 #include "driver/gpio.h"
+#include "driver/gpio_filter.h"
 #include "hal/gpio_types.h"
 #include "freertos/freertos.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_netif.h"
 #include "esp_spiffs.h"
-#include "esp_adc_cal.h"
-
 #include "esp_log.h"
 #include "sys/stat.h"
-
+#include "driver/gptimer.h"
+#include "driver/gptimer_types.h"
 #include "common_defines.h"
+#include "gpios.h"
 #include "mqtt_client.h"
 #include "mqtt_ctrl.h"
 #include "utils.h"
@@ -45,13 +43,16 @@ static struct {
 } waterop_args;
 
 static const char *TAG = "WATER OP";
-static TaskHandle_t water_task_handle;
+static TaskHandle_t water_task_handle, water_cmd_handle;
 static int watering_status;
 static int pump_present, pstate, pstatus, ppressure, pcurrent, pminlim, pmaxlim;
 static volatile uint64_t last_pump_state, last_pump_mon;
 static dvprogram_t dv_program;
 dvconfig_t dvconfig[DVCOUNT];
 int activeDV;
+
+static gptimer_handle_t cmd_timer;
+static QueueHandle_t dv_cmd_queue = NULL;
 
 static int read_program_status();
 static int read_program(dvprogram_t *param_val);
@@ -68,36 +69,99 @@ typedef struct
 		}msg_t;
 */
 
+static void IRAM_ATTR gpio_isr_handler(void* arg)
+	{
+	msg_t msg;
+    msg.source = (uint32_t) arg;
+	xQueueSendFromISR(dv_cmd_queue, &msg, NULL);
+	}
+
+static bool IRAM_ATTR cmd_timer_callback(gptimer_handle_t c_timer, const gptimer_alarm_event_data_t *edata, void *args)
+	{
+	msg_t msg;
+    BaseType_t high_task_awoken = pdFALSE;
+    msg.source = 0xff;
+	xQueueSendFromISR(dv_cmd_queue, &msg, NULL);
+    return high_task_awoken == pdTRUE; // return whether we need to yield at the end of ISR
+	}
+
+static void config_cmd_timer()
+	{
+	cmd_timer = NULL;
+	gptimer_config_t gptconf = 	{
+								.clk_src = GPTIMER_CLK_SRC_DEFAULT,
+								.direction = GPTIMER_COUNT_UP,
+								.resolution_hz = 1000000,					//1 usec resolution
+
+								};
+	gptimer_alarm_config_t al_config = 	{
+										.reload_count = 0,
+										.alarm_count = PUSH_TIME_US,
+										.flags.auto_reload_on_alarm = true,
+										};
+
+	gptimer_event_callbacks_t cbs = {.on_alarm = &cmd_timer_callback,}; // register user callback
+	ESP_ERROR_CHECK(gptimer_new_timer(&gptconf, &cmd_timer));
+	ESP_ERROR_CHECK(gptimer_set_alarm_action(cmd_timer, &al_config));
+	ESP_ERROR_CHECK(gptimer_register_event_callbacks(cmd_timer, &cbs, NULL));
+	ESP_ERROR_CHECK(gptimer_enable(cmd_timer));
+	}
+
 static int open_dv(int dvnum)
 	{
 	int dv_current, op_start = 0;
 	int coff = 0, i;
+	gpio_config_t io_conf;
 	gpio_set_level(PINMOT_A1, PIN_ON);
 	gpio_set_level(PINMOT_B1, PIN_OFF);
+	io_conf.mode = GPIO_MODE_OUTPUT;
+	io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.pull_down_en = 1;
+    io_conf.pull_up_en = 0;
+
 	if(dvnum == 0)
+		{
+		io_conf.pin_bit_mask = (1ULL << PINEN_DV0);
+		gpio_config(&io_conf);
 		gpio_set_level(PINEN_DV0, PIN_ON);
+		}
 	else if(dvnum == 1)
+		{
+		io_conf.pin_bit_mask = (1ULL << PINEN_DV1);
+		gpio_config(&io_conf);
 		gpio_set_level(PINEN_DV1, PIN_ON);
+		}
+	/*
+	 * loop until measured current is < CURRENT_OFF_LIM
+	 * 30 loops ~ 15 sec
+	 */
 	for(i = 0; i < 30; i++)
 		{
 		vTaskDelay(500 / portTICK_PERIOD_MS);
-		get_dv_adc_values(&dv_current);
-		//ESP_LOGI(TAG, "sense voltage: %d (%04x)", dv_current, dv_current);
-		if(dv_current < CURRENT_OFF_LIM)
-			coff++;
-		else
+		if(get_dv_adc_values(&dv_current) == ESP_OK)
 			{
-			coff = 0;
-			op_start = 1;
+			if(dv_current < CURRENT_OFF_LIM)
+				coff++;
+			else
+				{
+				coff = 0;
+				op_start = 1;
+				}
+			if(coff >= CURRENT_OFF_COUNT)
+				break;
 			}
-		if(coff >= CURRENT_OFF_COUNT)
-			break;
 		}
 	gpio_set_level(PINMOT_A1, PIN_OFF);
 	gpio_set_level(PINMOT_B1, PIN_OFF);
 	gpio_set_level(PINEN_DV0, PIN_OFF);
 	gpio_set_level(PINEN_DV1, PIN_OFF);
-	if(op_start == 0)
+	io_conf.mode = GPIO_MODE_INPUT;
+	io_conf.intr_type = GPIO_INTR_ANYEDGE;
+    io_conf.pull_down_en = 1;
+    io_conf.pull_up_en = 0;
+    io_conf.pin_bit_mask = (1ULL << PINEN_DV0) || (1ULL << PINEN_DV1);
+	gpio_config(&io_conf);
+	if(op_start == 0 && i < 30)
 		{
 		ESP_LOGI(TAG, "DV%d already in DVOPEN state", dvnum);
 		activeDV =  dvconfig[dvnum].dvno;
@@ -131,24 +195,25 @@ static int close_dv(int dvnum)
 	for(i = 0; i < 30; i++)
 		{
 		vTaskDelay(500 / portTICK_PERIOD_MS);
-		get_dv_adc_values(&dv_current);
-		//ESP_LOGI(TAG, "sense voltage: %d (%04x)", dv_current, dv_current);
-		if(dv_current < CURRENT_OFF_LIM)
-			coff++;
-		else
+		if(get_dv_adc_values(&dv_current) == ESP_OK)
 			{
-			op_start = 1;
-			coff = 0;
-			}
+			if(dv_current < CURRENT_OFF_LIM)
+				coff++;
+			else
+				{
+				op_start = 1;
+				coff = 0;
+				}
 
-		if(coff >= CURRENT_OFF_COUNT)
-			break;
+			if(coff >= CURRENT_OFF_COUNT)
+				break;
+			}
 		}
 	gpio_set_level(PINMOT_A1, PIN_OFF);
 	gpio_set_level(PINMOT_B1, PIN_OFF);
 	gpio_set_level(PINEN_DV0, PIN_OFF);
 	gpio_set_level(PINEN_DV1, PIN_OFF);
-	if(op_start == 0)
+	if(op_start == 0 && i < 30)
 		{
 		ESP_LOGI(TAG, "DV%d already in closed state", dvnum);
 		activeDV =  -1;
@@ -171,14 +236,36 @@ static int close_dv(int dvnum)
 static void config_dv_gpio(void)
 	{
 	gpio_config_t io_conf;
+	gpio_pin_glitch_filter_config_t g_conf;
+	gpio_glitch_filter_handle_t dv0_filter, dv1_filter;
 	io_conf.intr_type = GPIO_INTR_DISABLE;
 	io_conf.mode = GPIO_MODE_OUTPUT;
-    io_conf.pin_bit_mask = (1ULL << PINEN_DV0) | (1ULL << PINEN_DV1) | (1ULL << PINMOT_A1) | (1ULL << PINMOT_B1) | (1ULL << PINMOT_A2) | (1ULL << PINMOT_B2);
+    io_conf.pin_bit_mask = (1ULL << PINMOT_A1) | (1ULL << PINMOT_B1);
     io_conf.pull_down_en = 0;
     io_conf.pull_up_en = 0;
     gpio_config(&io_conf);
-    gpio_set_level(PINEN_DV0, PIN_OFF);
-    gpio_set_level(PINEN_DV1, PIN_OFF);
+
+	io_conf.mode = GPIO_MODE_INPUT;
+	io_conf.intr_type = GPIO_INTR_ANYEDGE;
+    io_conf.pin_bit_mask = (1ULL << PINEN_DV0) | (1ULL << PINEN_DV1);
+    io_conf.pull_down_en = 1;
+    io_conf.pull_up_en = 0;
+    gpio_config(&io_conf);
+
+    gpio_isr_handler_add(PINEN_DV0, gpio_isr_handler, (void*) PINEN_DV0);
+    gpio_isr_handler_add(PINEN_DV1, gpio_isr_handler, (void*) PINEN_DV1);
+
+    g_conf.clk_src = APB_CLK_FREQ / 1000;
+    g_conf.gpio_num = PINEN_DV0;
+    gpio_new_pin_glitch_filter(&g_conf, &dv0_filter);
+    gpio_glitch_filter_enable(dv0_filter);
+
+    g_conf.gpio_num = PINEN_DV1;
+    gpio_new_pin_glitch_filter(&g_conf, &dv1_filter);
+    gpio_glitch_filter_enable(dv1_filter);
+
+    //gpio_set_level(PINEN_DV0, PIN_OFF);
+    //gpio_set_level(PINEN_DV1, PIN_OFF);
     gpio_set_level(PINMOT_A1, PIN_OFF);
     gpio_set_level(PINMOT_B1, PIN_OFF);
 	}
@@ -545,8 +632,8 @@ static int get_act_state(int dvnum)
 	//try close
 	gpio_set_level(PINMOT_A1, PIN_OFF);
 	gpio_set_level(PINMOT_B1, PIN_ON);
+	//try "close" first
 	strcpy(op, "close");
-
 	if(dvnum == 0)
 		gpio_set_level(PINEN_DV0, PIN_ON);
 	else if(dvnum == 1)
@@ -567,7 +654,7 @@ static int get_act_state(int dvnum)
 	c_med /= 3;
 	if(c_med < CURRENT_OFF_LIM) // DV already closed
 		ret_state = DVCLOSE;
-	else // DV OPEN
+	else // DV is open -> move back to "open" state
 		{
 		ret_state = DVOPEN;
 		//revert op
@@ -575,16 +662,63 @@ static int get_act_state(int dvnum)
 		}
 	return ret_state;
 	}
-
+static void water_cmd_task(void* arg)
+	{
+	msg_t msg;
+	int i, dvb = 0;
+	while(1)
+		{
+        if(xQueueReceive(dv_cmd_queue, &msg, portMAX_DELAY))
+        	{
+        	if(msg.source == PINEN_DV0 || msg.source == PINEN_DV1)
+        		{
+        		i = gpio_get_level(msg.source);
+        		ESP_LOGI(TAG, "gpio intr %lu, %d", msg.source, i);
+				if(i == 1) // start pushbutton pressed. start 3 sec timer
+					{
+					//if(&cmd_timer->fsm == 1)
+						{
+						gptimer_set_raw_count(cmd_timer, 0);
+						gptimer_start(cmd_timer);
+						dvb = msg.source;
+						}
+					}
+				else // start pushbutton released
+					{
+					//if(cmd_timer->fsm == GPTIMER_FSM_RUN)
+						{
+						gptimer_stop(cmd_timer);
+						dvb = 0;
+						}
+					}
+        		}
+        	else if(msg.source == 0xff)
+        		{
+        		//if(cmd_timer->fsm == GPTIMER_FSM_RUN)
+					{
+					gptimer_stop(cmd_timer);
+					ESP_LOGI(TAG, "water cmd timer espired");
+					/*
+					if(dvb == PINEN_DV0)
+						open_dv(0);
+					else if(dvb == PINEN_DV1)
+						open_dv(1);
+					*/
+					}
+        		}
+        	}
+		}
+	}
 void register_waterop()
 	{
 	water_task_handle = NULL;
 	dvconfig[0].pin_current = PINSENSE_MOT;
 	dvconfig[1].pin_current = PINSENSE_MOT;
 
+	dv_cmd_queue = xQueueCreate(10, sizeof(msg_t));
 	config_dv_gpio();
-	adc_calibration_init();
-	config_adc_timer();
+	config_cmd_timer();
+
 	dvconfig[0].dvno = DV0;
 	dvconfig[0].state = DVCLOSE;
 	dvconfig[1].dvno = DV1;
@@ -616,6 +750,12 @@ void register_waterop()
 	if(!water_task_handle)
 		{
 		ESP_LOGE(TAG, "Unable to start watering monitor task");
+		esp_restart();
+		}
+	xTaskCreate(water_cmd_task, "water_pump_cmd", 8192, NULL, 5, &water_cmd_handle);
+	if(!water_cmd_handle)
+		{
+		ESP_LOGE(TAG, "Unable to start gpio cmd water task");
 		esp_restart();
 		}
 	}

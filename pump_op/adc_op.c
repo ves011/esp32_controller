@@ -12,19 +12,16 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-//#include "driver/adc.h"
-//#include "driver/adc_common.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "hal/adc_types.h"
 #include "esp_netif.h"
-//#include "esp_adc_cal.h"
-//#include "driver/timer.h"
 #include "driver/gptimer.h"
 #include "esp_wifi.h"
 #include "esp_spiffs.h"
 #include "common_defines.h"
+#include "gpios.h"
 #include "adc_op.h"
 #include "pumpop.h"
 #include "waterop.h"
@@ -48,10 +45,11 @@ static bool IRAM_ATTR adc_timer_callback(gptimer_handle_t ad_timer, const gptime
 	{
     BaseType_t high_task_awoken = pdFALSE;
     //adc_raw[idx][sample_count++] = adc1_get_raw(channel[idx]);
-#if ACTIVE_CONTROLLER == PUMP_CONTROLLER
+#if ACTIVE_CONTROLLER == PUMP_CONTROLLER || ACTIVE_CONTROLLER == WP_CONTROLLER
     adc_oneshot_read(adc1_handle, CURRENT_ADC_CHANNEL, &adc_raw[0][sample_count]);
     adc_oneshot_read(adc1_handle, SENSOR_ADC_CHANNEL, &adc_raw[1][sample_count++]);
-#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
+#endif
+#if ACTIVE_CONTROLLER == WATER_CONTROLLER || ACTIVE_CONTROLLER == WP_CONTROLLER
     adc_oneshot_read(adc1_handle, PINSENSE_MOT - 1, &adc_raw[0][sample_count++]);
 #endif
     if(sample_count >= NR_SAMPLES)
@@ -85,6 +83,7 @@ void config_adc_timer()
 	ESP_ERROR_CHECK(gptimer_enable(adc_timer));
 	}
 
+#if ACTIVE_CONTROLLER == PUMP_CONTROLLER || ACTIVE_CONTROLLER == WP_CONTROLLER
 int get_pump_adc_values(minmax_t *min, minmax_t *max, int *psensor_mv)
 	{
 	//minmax_t min[10] = {0}, max[10] = {0};
@@ -137,13 +136,13 @@ int get_pump_adc_values(minmax_t *min, minmax_t *max, int *psensor_mv)
 			ESP_LOGI(TAG, "noisy loop: %lu -  av / stdev: %d / %d", l, sd, sqrtd);
 #endif
 			}
+		xSemaphoreGive(adcval_mutex);
     	}
     else
 		{
 		ESP_LOGI(TAG, "cannot take adcval_mutex");
 		return ESP_FAIL;
 		}
-    xSemaphoreGive(adcval_mutex);
 	if(l < LOOP_COUNT)
 		{
 		//good reading continue processing
@@ -240,24 +239,39 @@ int get_pump_adc_values(minmax_t *min, minmax_t *max, int *psensor_mv)
 		}
 	return ret;
 	}
+#endif
 
-void get_dv_adc_values(int *dv_mv)
+#if ACTIVE_CONTROLLER == WATER_CONTROLLER || ACTIVE_CONTROLLER == WP_CONTROLLER
+int get_dv_adc_values(int *dv_mv)
 	{
-	int mv;
+	int mv, ret = ESP_FAIL;
+	adc_msg_t msg;
 	sample_count = 0;
 	*dv_mv = 0;
-	gptimer_set_raw_count(adc_timer, 0);
-	gptimer_start(adc_timer);
-	while(sample_count < NR_SAMPLES)
-		vTaskDelay(pdMS_TO_TICKS(2));
-	for(int i = 0; i < sample_count; i++)
+	int q_wait = SAMPLE_PERIOD * NR_SAMPLES / 1000 + 50;
+	if(xSemaphoreTake(adcval_mutex, ( TickType_t ) 120 ) == pdTRUE)
 		{
-		adc_cali_raw_to_voltage(adc1_cal_handle, adc_raw[0][i], &mv);
-		*dv_mv += mv;
+		gptimer_set_raw_count(adc_timer, 0);
+		gptimer_start(adc_timer);
+		if(xQueueReceive(adc_evt_queue, &msg, q_wait / portTICK_PERIOD_MS))
+			{
+			for(int i = 0; i < sample_count; i++)
+				{
+				adc_cali_raw_to_voltage(adc1_cal_handle, adc_raw[0][i], &mv);
+				*dv_mv += mv;
+				}
+			*dv_mv /= sample_count;
+			ret = ESP_OK;
+			}
+		xSemaphoreGive(adcval_mutex);
+    	}
+    else
+		{
+		ESP_LOGI(TAG, "cannot take adcval_mutex");
 		}
-	*dv_mv /= sample_count;
+	return ret;
 	}
-
+#endif
 static bool adc_calibration_init5(adc_unit_t unit, adc_channel_t channel, adc_atten_t atten, adc_cali_handle_t *out_handle)
 	{
     adc_cali_handle_t handle = NULL;
@@ -301,6 +315,7 @@ static bool adc_calibration_init5(adc_unit_t unit, adc_channel_t channel, adc_at
             adc1_cal_handle = handle;
         	}
         ESP_LOGI(TAG, "calibration scheme version is Line Fitting, %d", calibrated);
+    	}
 #endif
 	return calibrated;
     }
@@ -323,10 +338,11 @@ void adc_init5()
 		.bitwidth = ADC_BITWIDTH_DEFAULT,
 		.atten = ADC_ATTEN_DB_11,
 	    };
-#if ACTIVE_CONTROLLER == PUMP_CONTROLLER
+#if ACTIVE_CONTROLLER == PUMP_CONTROLLER || ACTIVE_CONTROLLER == WP_CONTROLLER
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, CURRENT_ADC_CHANNEL, &config)); // current channel - pump
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, SENSOR_ADC_CHANNEL, &config)); // pressure channel - pump
-#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
+#endif
+#if ACTIVE_CONTROLLER == WATER_CONTROLLER || ACTIVE_CONTROLLER == WP_CONTROLLER
     ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, PINSENSE_MOT - 1, &config)); // current channel - DV2
     //ESP_ERROR_CHECK(adc_oneshot_config_channel(adc1_handle, ADC1_CHANNEL_0, &config)); // current channel - DV1
 #endif

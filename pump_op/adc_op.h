@@ -15,8 +15,8 @@
 #else
 	#define NR_SAMPLES					200
 #endif
-#define ADC_TIMER_GROUP				TIMER_GROUP_1
-#define ADC_TIMER_INDEX				TIMER_1
+//#define ADC_TIMER_GROUP				TIMER_GROUP_1
+//#define ADC_TIMER_INDEX				TIMER_1
 
 #define LOOP_COUNT					10
 #define STDEV_THERSHOLD				30
@@ -68,6 +68,6 @@ void init_adc(void);
 void adc_init5(void);
 void config_adc_timer(void);
 int get_pump_adc_values(minmax_t *min, minmax_t *max, int *psensor_mv);
-void get_dv_adc_values(int *dv_mv);
+int get_dv_adc_values(int *dv_mv);
 
 #endif /* MAIN_ADC_OP_H_ */

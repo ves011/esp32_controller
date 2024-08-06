@@ -16,14 +16,16 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include "common_defines.h"
+#include "project_specific.h"
 #include "mqtt_ctrl.h"
 #include "dht22.h"
 
-static const char *TAG = "DHT_RMT";
+#if ACTIVE_CONTROLLER == WESTA_CONTROLLER
 
+static const char *TAG = "DHT_RMT";
 static RingbufHandle_t ringbuf_handle = NULL;
 static SemaphoreHandle_t dhtd_mutex;
-
 int dht_init()
 	{
 	int ret = ESP_FAIL;
@@ -207,3 +209,4 @@ int get_dht_status()
 
 	return ret;
 	}
+#endif

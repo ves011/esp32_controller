@@ -12,10 +12,16 @@
 #ifndef MAIN_PROJECT_SPECIFIC_H_
 #define MAIN_PROJECT_SPECIFIC_H_
 
-#define WITH_CONSOLE
+#define TEST_BUILD 1
+#if(TEST_BUILD == 1)
+	#define WITH_CONSOLE
+	#define TEST1
+	#define CTRL_DEV_ID					100
+#else
+	#define CTRL_DEV_ID					1
+#endif
 
-#define ACTIVE_CONTROLLER			PUMP_CONTROLLER
-#define CTRL_DEV_ID					1
+#define ACTIVE_CONTROLLER			AGATE_CONTROLLER
 
 
 #endif /* MAIN_PROJECT_SPECIFIC_H_ */

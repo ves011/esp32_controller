@@ -40,10 +40,8 @@
 #include "esp_ota_ops.h"
 #include "gateop.h"
 #include "hal/adc_types.h"
-#include "adc_op.h"
-#include "pumpop.h"
+#include "gpios.h"
 #include "westaop.h"
-#include "waterop.h"
 
 //#include "driver/adc.h"
 //#include "esp_adc_cal.h"
@@ -51,14 +49,14 @@
 
 #define TAG "ctrl_dev"
 #define PROMPT_STR "CTRLDEV"
-#define CONFIG_STORE_HISTORY 0
+#define CONFIG_STORE_HISTORY 1
 #define CONFIG_CONSOLE_MAX_COMMAND_LINE_LENGTH	1024
 
 #include "wifi_credentials.h"
 
 //TaskHandle_t ntp_sync_task_handle;
 
-int console_state;
+console_state_t console_state;
 int restart_in_progress;
 int controller_op_registered;
 
@@ -82,36 +80,13 @@ static void initialize_nvs(void)
 	ESP_ERROR_CHECK(err);
 	}
 
-#if CONFIG_STORE_HISTORY
-	#define MOUNT_PATH "/data"
-	#define HISTORY_PATH MOUNT_PATH "/history.txt"
-	static void initialize_filesystem(void)
-		{
-		static wl_handle_t wl_handle;
-		const esp_vfs_fat_mount_config_t mount_config =
-			{
-			.max_files = 4,
-			.format_if_mount_failed = true
-			};
-		esp_err_t err = esp_vfs_fat_spiflash_mount(MOUNT_PATH, "storage", &mount_config, &wl_handle);
-		if (err != ESP_OK)
-			{
-			ESP_LOGE(TAG, "Failed to mount FATFS (%d/%s)", err, esp_err_to_name(err));
-			return;
-			}
-		}
-#endif // CONFIG_STORE_HISTORY
-
 void app_main(void)
 	{
-#if ACTIVE_CONTROLLER == PUMP_CONTROLLER
-	int bp_ctrl = PUMP_ONLINE_CMD;
-#elif ACTIVE_CONTROLLER == AGATE_CONTROLLER
+	gpio_install_isr_service(0);
+#if ACTIVE_CONTROLLER == AGATE_CONTROLLER
 	int bp_ctrl = 6; //IO6 on J5 pin 8
 #elif ACTIVE_CONTROLLER == WESTA_CONTROLLER
 	int bp_ctrl = 8; //IO8 on J4 pin 8
-#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
-	int bp_ctrl = 8; //TBD
 #endif
 	gpio_config_t io_conf;
 	io_conf.intr_type = GPIO_INTR_DISABLE;
@@ -121,7 +96,7 @@ void app_main(void)
     io_conf.pull_up_en = 1;
     gpio_config(&io_conf);
     /*
-     * if BOOT_CTRL_PIN is 0 at boot restart in factory mode
+     * if BOOT_CTRL_PIN is 0 at boot restart with esp32_ota
      */
     if(gpio_get_level(bp_ctrl) == 0)
     	{
@@ -151,17 +126,20 @@ void app_main(void)
 	spiffs_storage_check();
 	initialize_nvs();
 	controller_op_registered = 0;
-	rw_params(PARAM_READ, PARAM_CONSOLE, &console_state);
+
 	tsync = 0;
 	wifi_join(DEFAULT_SSID, DEFAULT_PASS, JOIN_TIMEOUT_MS);
+	rw_params(PARAM_READ, PARAM_CONSOLE, &console_state);
 	esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
+	tcp_log_task_handle = NULL;
+    tcp_log_evt_queue = NULL;
 	tcp_log_init();
 	esp_log_set_vprintf(my_log_vprintf);
 
 	xTaskCreate(ntp_sync, "NTP_sync_task", 6134, NULL, USER_TASK_PRIORITY, &ntp_sync_task_handle);
 
-	if(mqtt_start() == ESP_OK)
-		register_mqtt();
+	if(mqtt_start() != ESP_OK)
+		esp_restart();
 #ifdef WITH_CONSOLE
 	esp_console_repl_t *repl = NULL;
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
@@ -173,8 +151,8 @@ void app_main(void)
 
 
 #if CONFIG_STORE_HISTORY
-	initialize_filesystem();
-	repl_config.history_save_path = HISTORY_PATH;
+	//initialize_filesystem();
+	repl_config.history_save_path = BASE_PATH HISTORY_FILE;
 	ESP_LOGI(TAG, "Command history enabled");
 #else
 	ESP_LOGI(TAG, "Command history disabled");
@@ -192,12 +170,9 @@ void app_main(void)
 
 #if ACTIVE_CONTROLLER == AGATE_CONTROLLER
 	register_gateop();
-#elif ACTIVE_CONTROLLER == PUMP_CONTROLLER
-	register_pumpop();
-#elif ACTIVE_CONTROLLER == WESTA_CONTROLLER
+#endif
+#if ACTIVE_CONTROLLER == WESTA_CONTROLLER
 	register_westaop();
-#elif ACTIVE_CONTROLLER == WATER_CONTROLLER
-	register_waterop();
 #endif
 	controller_op_registered = 1;
 
