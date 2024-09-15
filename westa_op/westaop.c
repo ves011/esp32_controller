@@ -16,10 +16,11 @@
 #include "errno.h"
 #include "ctype.h"
 #include "esp_netif.h"
-#include "esp_spi_flash.h"
+//#include "esp_spi_flash.h"
 #include "esp_spiffs.h"
 #include "esp_vfs_dev.h"
 #include "esp_vfs_fat.h"
+#include "driver/gptimer.h"
 #include "mqtt_client.h"
 #include "common_defines.h"
 #include "external_defs.h"
@@ -32,9 +33,21 @@
 
 #if ACTIVE_CONTROLLER == WESTA_CONTROLLER
 
+struct
+	{
+    struct arg_str *dst;
+    struct arg_str *op;
+    struct arg_int *os_mode;
+    struct arg_int *filter;
+    struct arg_int *odr;
+    struct arg_int *power_mode;
+    struct arg_end *end;
+	} westaop_args;
+
 static bmp2_dev_t bmpdev;
 static uint8_t osrs_t, osrs_p;
-static int publish_range(char *start_date, char *end_date, int nvals, int av_points);
+
+static QueueHandle_t westa_cmd_queue = NULL;
 
 static const char *TAG = "WESTA OP";
 static double psl;
@@ -75,33 +88,12 @@ static int get_bmp_data(bmp_data_t *bmpdata)
 			ESP_LOGI(TAG, "Temperature = %8.3f", bmpdata->temperature);
 			ESP_LOGI(TAG, "Pressure    = %8.3f", bmpdata->pressure);
 			sprintf(buf, "BMP\1%.3f\1%.3f", bmpdata->temperature, bmpdata->pressure);
-			publish_state(buf, 0, 0);
+			publish_topic(TOPIC_STATE, buf, 0, 0);
 			}
 		}
 	return res;
 	}
-/*
-static int get_bmp_data(bmp_data_t *bmpdata)
-	{
-	int res = BMP2_E_COM_FAIL;
-	struct bmp2_status bmps;
-	while((res = bmp2_get_status(&bmps, &bmpdev) == BMP2_OK) && bmps.measuring == 1)
-		{
-		vTaskDelay(pdMS_TO_TICKS(10));
-		ESP_LOGI(TAG, "bmp280 busy");
-		}
-	res = bmp2_get_sensor_data(bmpdata, &bmpdev);
-	if(res == BMP2_OK)
-		{
-		char buf[50];
-		ESP_LOGI(TAG, "Temperature = %8.3f", bmpdata->temperature);
-		ESP_LOGI(TAG, "Pressure    = %8.3f", bmpdata->pressure);
-		//sprintf(buf, "BMP\1%.3f\1%.3f", bmpdata->temperature, bmpdata->pressure);
-		//publish_state(buf, 0, 0);
-		}
-	return res;
-	}
-*/
+
 static void get_bmp_status(void)
 	{
 	int res;
@@ -116,7 +108,7 @@ static void get_bmp_status(void)
 			{
 			ESP_LOGI(TAG, "filter: %d, os_pres: %d, os_temp: %d, pmode: %d",  conf.filter, conf.os_pres, conf.os_temp, pmode);
 			sprintf(buf, "BMP%d\1%d\1%d\1%d", conf.filter, conf.os_pres, conf.os_temp, pmode);
-			publish_state(buf, 0, 0);
+			publish_topic(TOPIC_STATE, buf, 0, 0);
 			}
 		}
 	}
@@ -240,7 +232,7 @@ int do_westaop(int argc, char **argv)
 					ESP_LOGI(TAG, "Error reading parameters pnorm\nReverting to default values: psl = %.3lf, hmp = %.3lf", DEFAULT_PSL, DEFAULT_ELEVATION);
 					sprintf(buf, "BMP\1 0\1%.3lf\1%.3lf", DEFAULT_PSL, DEFAULT_ELEVATION);
 					}
-				publish_state(buf, 0, 0);
+				publish_topic(TOPIC_STATE, buf, 0, 0);
    				}
    			else
    				{
@@ -268,7 +260,7 @@ int do_westaop(int argc, char **argv)
 							ESP_LOGI(TAG, "Eror updating pnorm parameters.\nKeeping old values: %.3lf, %.3lf", psl, hmp);
 							sprintf(buf, "BMP\1 0\1%.3lf\1%.3lf", psl, hmp);
 							}
-						publish_state(buf, 0, 0);
+						publish_topic(TOPIC_STATE, buf, 0, 0);
    						}
    					}
    				}
@@ -278,53 +270,8 @@ int do_westaop(int argc, char **argv)
     	{
     	if(!strcmp(westaop_args.op->sval[0], "read"))
     		get_dht_data(&dhtdata);
-    	if(!strcmp(westaop_args.op->sval[0], "state"))
-    		{
-    		res = get_dht_status();
-    		ESP_LOGI(TAG, "DHT status: %d", res);
-    		}
     	}
-    else if(!strcmp(westaop_args.dst->sval[0], "range"))
-    	{
-    	char start_date[32], end_date[32], *b;
-   		int i = 0, k = 0, nvals = 0;
-   		b = start_date;
-   		start_date[0] = end_date[0] = 0;
-   		if(strstr(westaop_args.op->sval[0], ">#"))
-   			nvals = 1;
 
-   		while(i < strlen(westaop_args.op->sval[0]))
-   			{
-   			if(westaop_args.op->sval[0][i] != '>')
-   				b[k] = westaop_args.op->sval[0][i];
-   			else
-   				{
-   				if(nvals)
-   					{
-   					i += 2;
-   					nvals = atoi(westaop_args.op->sval[0] + i);
-   					break;
-   					}
-   				else
-   					{
-					b[k] = 0;
-					b = end_date;
-					k = -1;
-					}
-   				}
-   			i++;
-   			k++;
-    		}
-    	b[k] = 0;
-    	if(westaop_args.os_mode->count)
-    		i = westaop_args.os_mode->ival[0];
-    	else
-    		i = 1;
-    	ESP_LOGI(TAG, "start %s", start_date);
-    	ESP_LOGI(TAG, "start %s", end_date);
-    	ESP_LOGI(TAG, "n vals %d", nvals);
-    	publish_range(start_date, end_date, nvals, i);
-    	}
     else
     	{
     	ESP_LOGI(TAG, "Unknown operand: %s", westaop_args.dst->sval[0]);
@@ -332,135 +279,73 @@ int do_westaop(int argc, char **argv)
     	}
     return 0;
 	}
+static bool IRAM_ATTR poll_timer_callback(gptimer_handle_t c_timer, const gptimer_alarm_event_data_t *edata, void *args)
+	{
+	msg_t msg;
+    BaseType_t high_task_awoken = pdFALSE;
+    msg.source = 1;
+	xQueueSendFromISR(westa_cmd_queue, &msg, NULL);
+    return high_task_awoken == pdTRUE; // return whether we need to yield at the end of ISR
+	}
+static void config_poll_timer()
+	{
+	gptimer_handle_t poll_timer;
+	poll_timer = NULL;
+	gptimer_config_t gptconf = 	{
+								.clk_src = GPTIMER_CLK_SRC_DEFAULT,
+								.direction = GPTIMER_COUNT_UP,
+								.resolution_hz = 1000000,					//1 usec resolution
+
+								};
+	gptimer_alarm_config_t al_config = 	{
+										.reload_count = 0,
+										.alarm_count = 1000000,
+										.flags.auto_reload_on_alarm = true,
+										};
+
+	gptimer_event_callbacks_t cbs = {.on_alarm = &poll_timer_callback,}; // register user callback
+	ESP_ERROR_CHECK(gptimer_new_timer(&gptconf, &poll_timer));
+	ESP_ERROR_CHECK(gptimer_set_alarm_action(poll_timer, &al_config));
+	ESP_ERROR_CHECK(gptimer_register_event_callbacks(poll_timer, &cbs, NULL));
+	ESP_ERROR_CHECK(gptimer_enable(poll_timer));
+	gptimer_start(poll_timer);
+	}
 static void pth_poll()
 	{
+	msg_t msg;
 	bmp_data_t bmpdata;
 	dht_data_t dhtdata;
-	int res;
-	uint32_t poll_int = (PTH_POLL_INT * portTICK_PERIOD_MS) / 1000;
-	char bufb[100], bufd[100];
-	TickType_t  tdelta;
-	res = dht_init();
+	int resb, resd;
+	struct tm timeinfo = { 0 };
+	char bufd[40], strpub[200];
 	pnorm = psl * pow((1 - hmp/44330), 5.255);
-	// get the first measurement when time%PTH_POLL_INT = 0
-	// and after tsync = 1 by ntp_sync
+	westa_cmd_queue = xQueueCreate(3, sizeof(msg_t));
+	config_poll_timer();
 	while(1)
 		{
-		time_t tm = time(NULL);
-		if(tm % poll_int == 0 && tsync)
-			break;
-		vTaskDelay(1000 / portTICK_PERIOD_MS); //wait 1 sec
-		}
-	while(1)
-		{
-		tdelta = xTaskGetTickCount();
-		res = get_bmp_data(&bmpdata);
-		if(res == BMP2_OK)
-			sprintf(bufb, "%.3lf %.3lf %.3lf", bmpdata.temperature, bmpdata.pressure, pnorm);
-		else
-			strcpy(bufb, "0.0 0.0 0.0");
-
-		res = get_dht_data(&dhtdata);
-		if(res == ESP_OK)
-			sprintf(bufd, " %.1lf %.1lf", dhtdata.humidity, dhtdata.temperature);
-		else
-			strcpy(bufd, " 0.0 0.0");
-
-		strcat(bufb, bufd);
-		write_tpdata(PARAM_WRITE, bufb);
-		sprintf(bufb, "BMPDHT\1%.3lf\1%.3lf\1%.3lf\1%.1lf\1%.1lf", bmpdata.temperature, bmpdata.pressure, pnorm, dhtdata.humidity, dhtdata.temperature);
-		publish_monitor(bufb, 0, 0);
-		// tdelta is used to avoid time drift because of long read operation
-		// wo tdelta the drift is almost 100msec per cycle
-		tdelta = xTaskGetTickCount() - tdelta;
-		vTaskDelay(PTH_POLL_INT - tdelta);
-		}
-	}
-static int publish_range(char *start_date, char *end_date, int nvals, int av_points)
-	{
-	int syear = 0, smonth = 0, sday = 0, shour = 0, smin = 0, ssec = 0;
-	int eyear = 0, emonth = 0, eday = 0, ehour = 0, emin = 0, esec = 0;
-	char file_name[80], bread[128], bdate[80], bval[128], bdateval[80];
-	double atb = 0, atd = 0, ahd = 0, apb = 0;
-	double pb, tb, pn, hd, td;
-	int k = 0, nval = 0;
-	FILE *f;
-	int ret = ESP_FAIL, i = 0;;
-	//2023-04-09/09:09:21 23.137 101199.138 77.488641 45.0 22.6
-	sscanf(start_date, "%d-%d-%dT%d:%d:%d", &syear, &smonth, &sday, &shour, &smin, &ssec);
-	sscanf(end_date, "%d-%d-%dT%d:%d:%d", &eyear, &emonth, &eday, &ehour, &emin, &esec);
-	sprintf(file_name, "%s/%d.tph", BASE_PATH, syear);
-	ESP_LOGI(TAG, "%d %d %d %d %d %d", syear, smonth, sday, shour, smin, ssec);
-	ESP_LOGI(TAG, "%d %d %d %d %d %d", eyear, emonth, eday, ehour, emin, esec);
-	ESP_LOGI(TAG, "%s", file_name);
-	if(xSemaphoreTake(pthfile_mutex, ( TickType_t ) 100 )) // 1 sec wait
-		{
-		f = fopen(file_name, "r");
-		if(f)
+		if(xQueueReceive(westa_cmd_queue, &msg, portMAX_DELAY))
 			{
-			while(!feof(f))
+			time_t tm = time(NULL);
+			if(tm % PTH_POLL_INT == 0 && tsync)
 				{
-				if(fgets(bread , sizeof(bread), f))
-					{
-					strncpy(bdate, bread, 19);
-					bdate[19] = 0;
-					if(strcmp(bdate, start_date) >= 0)
-						{
-						strcpy(bval, bread + 20);
-						tb = pb = pn = hd = td = 0;
-						sscanf(bval, "%lf %lf %lf %lf %lf", &tb, &pb, &pn, &hd, &td);
-						if(k == 0)
-							{
-							atb = 0; atd = 0; ahd = 0; apb = 0;
-							}
-						if(k == av_points / 2)
-							{
-							strcpy(bdateval, bdate);
-							}
-						atb += tb; atd += td; ahd += hd; apb += pb;
-						k++;
-						if(k == av_points)
-							{
-							atb /= k; atd /= k; ahd /= k; apb /= k;
-							k = 0;
-							sprintf(bread, "WR %s %.3lf %.3lf %.3lf %.3lf %.3lf", bdateval, atb, apb, pn, ahd, atd);
-							//ESP_LOGI(TAG, "%s", bread);
-							publish_state(bread, 0, 0);
-							nval++;
-							}
-						if(nvals > 0)
-							{
-							if(i >= nvals)
-								break;
-							}
-						else
-							{
-							if(strlen(end_date) && strcmp(bdate, end_date) >= 0)
-								break;
-							}
-						//ESP_LOGI(TAG, "%s", bread);
-						//publish_state(bread, 0, 0);
-						i++;
-						}
-					}
+				localtime_r(&tm, &timeinfo);
+				strftime(bufd, sizeof(bufd), "%Y-%m-%dT%H:%M:%S", &timeinfo);
+				resb = get_bmp_data(&bmpdata);
+				resd = get_dht_data(&dhtdata);
+				if(resb != BMP2_OK)
+					bmpdata.temperature = bmpdata.pressure = 0;
+				if(resd != ESP_OK)
+					dhtdata.humidity = dhtdata.temperature = 0;
+
+				sprintf(strpub, "%s\1%.2lf\1%.2lf\1%.2lf\1%.1lf\1%.1lf",
+						bufd, bmpdata.temperature, bmpdata.pressure, pnorm, dhtdata.humidity, dhtdata.temperature);
+				publish_topic(TOPIC_MONITOR, strpub, 0, 0);
+				//ESP_LOGI(TAG, "%s", strpub);
 				}
-			fclose(f);
-			ret =  ESP_OK;
 			}
-		else
-			{
-			ESP_LOGI(TAG, "Cannot open %s for reading. errno = %d", file_name, errno);
-			ret = ESP_FAIL;
-			}
-		xSemaphoreGive(pthfile_mutex);
 		}
-	else
-		ret = ESP_FAIL;
-	sprintf(bread, "WRS %d %d", i, nval);
-	publish_state(bread, 0, 0);
-	ESP_LOGI(TAG, "range: %d lines / n values: %d", i, nval);
-	return ret;
 	}
+
 void register_westaop(void)
 	{
 	uint8_t pmode = 0xff;
@@ -522,6 +407,7 @@ void register_westaop(void)
 		}
 	if(res != BMP2_OK)
 		ESP_LOGI(TAG, "Cannot initialize i2c driver. Error = %d", res);
+	dht_init();
 // test for normal mode
 //	bmp_data_t bmpdata;
 //	while(1 && res == BMP2_OK)

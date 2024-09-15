@@ -9,7 +9,7 @@
 #define WESTA_OP_DHT22_H_
 
 #define DHT_DATA_PIN 	5
-#define DHT_RMT_CHANNEL RMT_CHANNEL_4
+//#define DHT_RMT_CHANNEL RMT_CHANNEL_4
 
 typedef struct
 	{
@@ -19,6 +19,6 @@ typedef struct
 
 int dht_init(void);
 int get_dht_data(dht_data_t * dhtd);
-int get_dht_status(void);
+//int get_dht_status(void);
 
 #endif /* WESTA_OP_DHT22_H_ */

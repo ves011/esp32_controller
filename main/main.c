@@ -60,14 +60,6 @@ console_state_t console_state;
 int restart_in_progress;
 int controller_op_registered;
 
-esp_vfs_spiffs_conf_t conf_spiffs =
-	{
-	.base_path = BASE_PATH,
-	.partition_label = PARTITION_LABEL,
-	.max_files = 5,
-	.format_if_mount_failed = true
-	};
-
 
 static void initialize_nvs(void)
 	{
@@ -131,12 +123,11 @@ void app_main(void)
 	wifi_join(DEFAULT_SSID, DEFAULT_PASS, JOIN_TIMEOUT_MS);
 	rw_params(PARAM_READ, PARAM_CONSOLE, &console_state);
 	esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
-	tcp_log_task_handle = NULL;
+	//tcp_log_task_handle = NULL;
     tcp_log_evt_queue = NULL;
 	tcp_log_init();
 	esp_log_set_vprintf(my_log_vprintf);
-
-	xTaskCreate(ntp_sync, "NTP_sync_task", 6134, NULL, USER_TASK_PRIORITY, &ntp_sync_task_handle);
+	sync_NTP_time();
 
 	if(mqtt_start() != ESP_OK)
 		esp_restart();

@@ -49,6 +49,7 @@ struct {
 static const char *TAG = "GateOp";
 
 static int pulse_count_input;
+static int pc2report = 0;
 static uint32_t cmd_state;
 static uint32_t gate_state;
 static uint32_t gate_moving_state;
@@ -209,7 +210,7 @@ static void config_gate_gpio(void)
 	ESP_ERROR_CHECK(pcnt_new_channel(hf_pcnt_unit, &chan_config, &hf_pcnt_chan));
 
 	pcnt_channel_set_edge_action(hf_pcnt_chan, PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_HOLD);
-	pcnt_glitch_filter_config_t filter_config = {.max_glitch_ns = 10000,};
+	pcnt_glitch_filter_config_t filter_config = {.max_glitch_ns = 5000,};
 	pcnt_unit_set_glitch_filter(hf_pcnt_unit, &filter_config);
 	ESP_ERROR_CHECK(pcnt_unit_add_watch_point(hf_pcnt_unit, PULSE_COUNT_STEADY_OPEN));
 	pcnt_event_callbacks_t cbs = {.on_reach = hf_pcnt_isr,};
@@ -219,8 +220,19 @@ static void config_gate_gpio(void)
     ESP_ERROR_CHECK(pcnt_unit_start(hf_pcnt_unit));
 	}
 
+static void get_gate_state()
+	{
+	char msg[100];
+	ESP_LOGI(TAG, "\n gate_state = %lu / gate_moving_state = %lu / pulse_count = %d / cmd_state = %lu\n",
+		gate_state, gate_moving_state, pc2report, cmd_state);
+	sprintf(msg, "%lu\1%lu\1%d\1%lu",
+		gate_state, gate_moving_state,  pc2report, cmd_state);
+	publish_topic(TOPIC_STATE, msg, 0, 0);
+	}
+
 static void open_gate()
 	{
+	//get_gate_state();
 	cmd_state = CMD_OPEN;
 	// pulse command
 	gpio_set_level(GATE_PIN_OPEN, PIN_ON);
@@ -231,6 +243,7 @@ static void open_gate()
 
 static void close_gate()
 	{
+	//get_gate_state();
 	cmd_state = CMD_CLOSE;
 
 	gpio_set_level(GATE_PIN_CLOSE, PIN_ON);
@@ -244,6 +257,7 @@ static void openped_gate()
 		vTaskDelay(pdMS_TO_TICKS(15));
 	if(gate_state == STATE_CLOSED && gate_moving_state == STEADY_STATE) // command allowed only if gate is closed
 		{
+		//get_gate_state();
 		cmd_state = CMD_CLOSE;
 		// pulse command
 		gpio_set_level(GATE_PIN_CLOSE, PIN_ON);
@@ -252,22 +266,12 @@ static void openped_gate()
 		}
 	}
 
-static void get_gate_state()
-	{
-	char msg[100];
-	ESP_LOGI(TAG, "\n gate_state = %lu / gate_moving_state = %lu / pulse_count = %d / cmd_state = %lu\n",
-		gate_state, gate_moving_state, pulse_count_input, cmd_state);
-	sprintf(msg, "%lu\1%lu\1%d\1%lu",
-		gate_state, gate_moving_state,  pulse_count_input, cmd_state);
-	publish_topic(TOPIC_STATE, msg, 0, 0);
-	}
-
 void gate_task()
 	{
 	gate_evt_t gevt;
 	char msg[100];
-	int saved_gate_state = -1, saved_gate_moving_state = -1,  saved_cmd_state = -1;
-	int p_count[5], idx = 0, spc = 0;
+	int saved_gate_moving_state = -1, saved_gate_state = -1;
+	int p_count[5], idx = 0;
 	while(1)
 		{
 		xQueueReceive(gate_evt_queue, &gevt, portMAX_DELAY);
@@ -280,12 +284,14 @@ void gate_task()
 				gate_moving_state = STEADY_STATE;
 				gate_state = STATE_OPEN;
 				cmd_state = CMD_COMPLETE;
+				pc2report = gevt.pulse_count;
 				}
 			else if(gevt.pulse_count == PULSE_COUNT_STEADY_CLOSE) //steady closed
 				{
 				gate_moving_state = STEADY_STATE;
 				gate_state = STATE_CLOSED;
 				cmd_state = CMD_COMPLETE;
+				pc2report = gevt.pulse_count;
 				}
 			else // moving state
 				{
@@ -293,16 +299,19 @@ void gate_task()
 				if(gevt.pulse_count == -1)
 					{
 					for(int i = 0; i < idx; i++)
-						spc += p_count[i];
-					if(spc > PULSE_COUNT_OPEN - 20)
+						pc2report += p_count[i];
+					if(pc2report > PULSE_COUNT_OPEN - 20)
 						gate_moving_state = OPEN_IN_PROGRESS;
-					else if(spc > PULSE_COUNT_CLOSE - 20 && spc < PULSE_COUNT_CLOSE + 20)
+					else if(pc2report > PULSE_COUNT_CLOSE - 20 && pc2report < PULSE_COUNT_CLOSE + 20)
 						gate_moving_state = CLOSE_IN_PROGRESS;
 					else
 						gate_moving_state = MOVING_STATE;
 					gate_state = STATE_OPEN;
-					ESP_LOGI(TAG, "in progress: %lu / %d(%d)", gate_moving_state, spc, idx);
-					idx = spc = 0;
+					ESP_LOGI(TAG, "in progress: %lu / %d(%d)", gate_moving_state, pc2report, idx);
+					sprintf(msg, "%lu\1%lu\1%d\1%lu",
+							gate_state, gate_moving_state,  pc2report, cmd_state);
+					publish_topic(TOPIC_MONITOR, msg, 0, 0);
+					idx = pc2report = 0;
 					}
 				else
 					{
@@ -310,18 +319,16 @@ void gate_task()
 					}
 				}
 			if(saved_gate_state != gate_state ||
-					saved_gate_moving_state != gate_moving_state ||
-						saved_cmd_state != cmd_state)
+					saved_gate_moving_state != gate_moving_state)
 				{
 				/*
 				 * save and publish the event in TOPIC_STATE
 				 */
 				saved_gate_state = gate_state;
 				saved_gate_moving_state = gate_moving_state;
-				saved_cmd_state = cmd_state;
 				sprintf(msg, "%lu\1%lu\1%d\1%lu",
 							gate_state, gate_moving_state,  gevt.pulse_count, cmd_state);
-				//publish_topic(TOPIC_STATE, msg, 0, 0);
+				publish_topic(TOPIC_MONITOR, msg, 0, 0);
 				ESP_LOGI(TAG, "gate state %2lu / mv state: %2lu / pc: %5d / cmd state: %2lu / %llu", gate_state, gate_moving_state, gevt.pulse_count, cmd_state, gevt.time);
 				}
 			}

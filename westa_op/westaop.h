@@ -23,8 +23,10 @@
  /** address of BMP280 device */
 #define BMP280_I2C_ADDRESS			0x76
  /** reading interval of pressure temp and humidity */
-//#define PTH_POLL_INT				60000 	/ portTICK_PERIOD_MS 	// 1min
-#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS 	//30 mins
+//#define PTH_POLL_INT				10000 	/ portTICK_PERIOD_MS 	// 10 sec
+//#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS 	//30 mins
+#define PTH_POLL_INT				1800 	//30 mins
+//#define PTH_POLL_INT				30 	//30 sec
  /** default normal sea level pressure */
 #define DEFAULT_PSL					1013.25
  /** default measuring point elevationA */
@@ -32,17 +34,6 @@
 
  /** Name of the file storing normal pressure calculation: <measuring point xx.xx> altitude <sea level pressure xxxx.xxx> */
 #define PNORM_FILE		"pnorm.txt"
-
-struct
-	{
-    struct arg_str *dst;
-    struct arg_str *op;
-    struct arg_int *os_mode;
-    struct arg_int *filter;
-    struct arg_int *odr;
-    struct arg_int *power_mode;
-    struct arg_end *end;
-	} westaop_args;
 
 typedef struct
 	{
