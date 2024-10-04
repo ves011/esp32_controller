@@ -8,10 +8,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include "driver/gpio.h"
 #include "esp_log.h"
 #include "driver/i2c.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
+#include "esp_timer.h"
+#include "hal/gpio_types.h"
 #include "math.h"
 #include "errno.h"
 #include "ctype.h"
@@ -53,8 +56,11 @@ static const char *TAG = "WESTA OP";
 static double psl;
 static double hmp;
 static double pnorm;
+static double ml_b;
+static int sq_cmp;
 
-SemaphoreHandle_t pthfile_mutex;
+// no need sice data is saved in the remote database
+//SemaphoreHandle_t pthfile_mutex;
 
 static int get_bmp_data(bmp_data_t *bmpdata)
 	{
@@ -271,7 +277,31 @@ int do_westaop(int argc, char **argv)
     	if(!strcmp(westaop_args.op->sval[0], "read"))
     		get_dht_data(&dhtdata);
     	}
-
+	else if(!strcmp(westaop_args.dst->sval[0], "rg"))
+    	{
+    	if(!strcmp(westaop_args.op->sval[0], "cal"))
+    		{
+			pgcal_t rgcal;
+			if(argc == 3) // no parameter just read the calibration
+				{
+				if(rw_params(PARAM_READ, PARAM_RGCAL, &rgcal) == ESP_OK)
+					ESP_LOGI(TAG, "rg cal: %.1lf ml/bucket  %d cmp area", rgcal.mlb, rgcal.sqcmp);	
+				}
+			else
+				{
+				if(westaop_args.os_mode->count == 1)
+					{
+					rgcal.mlb = westaop_args.os_mode->ival[0] / 10.;
+					rgcal.sqcmp = westaop_args.filter->ival[0];
+					if(rw_params(PARAM_WRITE, PARAM_RGCAL, &rgcal) == ESP_OK)
+						{
+						ml_b = rgcal.mlb;
+						sq_cmp = rgcal.sqcmp;
+						}
+					}
+				}
+			}
+    	}
     else
     	{
     	ESP_LOGI(TAG, "Unknown operand: %s", westaop_args.dst->sval[0]);
@@ -279,6 +309,7 @@ int do_westaop(int argc, char **argv)
     	}
     return 0;
 	}
+
 static bool IRAM_ATTR poll_timer_callback(gptimer_handle_t c_timer, const gptimer_alarm_event_data_t *edata, void *args)
 	{
 	msg_t msg;
@@ -310,37 +341,84 @@ static void config_poll_timer()
 	ESP_ERROR_CHECK(gptimer_enable(poll_timer));
 	gptimer_start(poll_timer);
 	}
+static void IRAM_ATTR rg_isr_handler(void* arg)
+	{
+	msg_t msg;
+    //uint32_t gpio_num = (uint32_t) arg;
+    //if(gpio_num == RG_GPIO)
+    	{
+		msg.source = 2;
+		msg.val = gpio_get_level(RG_GPIO);
+		msg.vts.ts = esp_timer_get_time();
+		xQueueSendFromISR(westa_cmd_queue, &msg, NULL);
+		}
+	}
+static void config_rg_gpio()
+	{
+	gpio_config_t io_conf;
+	io_conf.intr_type = GPIO_INTR_ANYEDGE;
+	io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL << RG_GPIO);
+    //io_conf.pull_down_en = 0;
+    //io_conf.pull_up_en = 1;
+    gpio_config(&io_conf);
+    gpio_isr_handler_add(RG_GPIO, rg_isr_handler, (void*) RG_GPIO);
+	}
+
 static void pth_poll()
 	{
 	msg_t msg;
 	bmp_data_t bmpdata;
 	dht_data_t dhtdata;
+	int mlmp;
 	int resb, resd;
 	struct tm timeinfo = { 0 };
 	char bufd[40], strpub[200];
+	int bucket_counter = 0;
 	pnorm = psl * pow((1 - hmp/44330), 5.255);
 	westa_cmd_queue = xQueueCreate(3, sizeof(msg_t));
+	config_rg_gpio();
+	uint64_t last_ts = 0;
+	ESP_LOGI(TAG, "pth poll create - rg_state: %d", gpio_get_level(RG_GPIO));
 	config_poll_timer();
 	while(1)
 		{
 		if(xQueueReceive(westa_cmd_queue, &msg, portMAX_DELAY))
 			{
-			time_t tm = time(NULL);
-			if(tm % PTH_POLL_INT == 0 && tsync)
+			if(msg.source == 1)
 				{
-				localtime_r(&tm, &timeinfo);
-				strftime(bufd, sizeof(bufd), "%Y-%m-%dT%H:%M:%S", &timeinfo);
-				resb = get_bmp_data(&bmpdata);
-				resd = get_dht_data(&dhtdata);
-				if(resb != BMP2_OK)
-					bmpdata.temperature = bmpdata.pressure = 0;
-				if(resd != ESP_OK)
-					dhtdata.humidity = dhtdata.temperature = 0;
-
-				sprintf(strpub, "%s\1%.2lf\1%.2lf\1%.2lf\1%.1lf\1%.1lf",
-						bufd, bmpdata.temperature, bmpdata.pressure, pnorm, dhtdata.humidity, dhtdata.temperature);
-				publish_topic(TOPIC_MONITOR, strpub, 0, 0);
-				//ESP_LOGI(TAG, "%s", strpub);
+				time_t tm = time(NULL);
+				if(tm % PTH_POLL_INT == 0 && tsync)
+					{
+					localtime_r(&tm, &timeinfo);
+					strftime(bufd, sizeof(bufd), "%Y-%m-%dT%H:%M:%S", &timeinfo);
+					resb = get_bmp_data(&bmpdata);
+					resd = get_dht_data(&dhtdata);
+					if(resb != BMP2_OK)
+						bmpdata.temperature = bmpdata.pressure = 0;
+					if(resd != ESP_OK)
+						dhtdata.humidity = dhtdata.temperature = 0;
+					mlmp = (ml_b * 10000 * bucket_counter) / sq_cmp;
+					ESP_LOGI(TAG, "ml/mp: %d / bucket_counter: %d", mlmp, bucket_counter);
+					sprintf(strpub, "%s\1%.2lf\1%.2lf\1%.2lf\1%.1lf\1%.1lf\1%d",
+							bufd, bmpdata.temperature, bmpdata.pressure, pnorm, dhtdata.humidity, dhtdata.temperature, mlmp);
+					publish_topic(TOPIC_MONITOR, strpub, 0, 0);
+					//ESP_LOGI(TAG, "%s", strpub);
+					bucket_counter = 0;
+					}
+				}
+			else if(msg.source == 2)
+				{
+				ESP_LOGI(TAG, "rg interrupt: rg_state: %lu  ts: %15llu", msg.val, msg.vts.ts);
+				if(/*last_rg_state == 0 &&*/ msg.val == 1)
+					{
+					if(msg.vts.ts - last_ts > RG_DEBOUNCE)
+						{
+						bucket_counter++;
+						//ESP_LOGI(TAG, "bucket_counter: %d rg_state: %lu  ts: %15llu", bucket_counter, msg.val, msg.vts.ts - last_ts);
+						}
+					}
+				last_ts = msg.vts.ts;
 				}
 			}
 		}
@@ -350,18 +428,31 @@ void register_westaop(void)
 	{
 	uint8_t pmode = 0xff;
 	struct bmp2_config conf;
+	pgcal_t rgcal;
 	bmpdev.intf = BMP2_I2C_INTF;
 	bmpdev.delay_us = my_usleep;
 	bmpdev.read = bmp280_read;
 	bmpdev.write = bmp280_write;
 	bmpdev.intf_ptr = NULL;
 	pnorm_param_t param = {0, 0};
+	if(rw_params(PARAM_READ, PARAM_RGCAL, &rgcal) == ESP_OK)
+		{
+		ml_b = rgcal.mlb;
+		sq_cmp = rgcal.sqcmp;
+		}
+	else 
+		{
+		ml_b = DEFAULT_RGCAL;
+		sq_cmp = DEFAULT_SQCMP;
+		}
+	/*
 	pthfile_mutex = xSemaphoreCreateMutex();
 	if(!pthfile_mutex)
 		{
 		ESP_LOGE(TAG, "cannot create pthfile_mutex");
 		esp_restart();
 		}
+	*/
 	if(rw_params(PARAM_READ, PARAM_PNORM, &param) == ESP_OK)
 		{
 		psl = param.psl;
@@ -416,7 +507,6 @@ void register_westaop(void)
 //		vTaskDelay(2000 / portTICK_PERIOD_MS); //wait 2 seconds
 //		}
 // end test for normal mode
-
 
 	westaop_args.dst = arg_str1(NULL, NULL, "<dest>", "bmp | dht");
 	westaop_args.op = arg_str1(NULL, NULL, "<op>", "status | set | read");

@@ -12,6 +12,9 @@
 #ifndef WESTA_OP_WESTAOP_H_
 #define WESTA_OP_WESTAOP_H_
 
+#define RG_GPIO						7
+#define RG_DEBOUNCE					2000 /*!< reel relay debounce time (usec)*/
+
 #define I2C_MASTER_SCL_IO           4      					/*!< GPIO number used for I2C master clock */
 #define I2C_MASTER_SDA_IO           1      					/*!< GPIO number used for I2C master data  */
 #define I2C_MASTER_NUM              0                       /*!< I2C master i2c port number, the number of i2c peripheral interfaces available will depend on the chip */
@@ -25,12 +28,16 @@
  /** reading interval of pressure temp and humidity */
 //#define PTH_POLL_INT				10000 	/ portTICK_PERIOD_MS 	// 10 sec
 //#define PTH_POLL_INT				1800000 / portTICK_PERIOD_MS 	//30 mins
-#define PTH_POLL_INT				1800 	//30 mins
-//#define PTH_POLL_INT				30 	//30 sec
+//#define PTH_POLL_INT				1800 	//30 mins
+#define PTH_POLL_INT				30 	//30 sec
  /** default normal sea level pressure */
 #define DEFAULT_PSL					1013.25
  /** default measuring point elevationA */
 #define DEFAULT_ELEVATION			87.5
+
+/** default rg calibration ml/bucket*/
+#define DEFAULT_RGCAL				1.8
+#define DEFAULT_SQCMP				55
 
  /** Name of the file storing normal pressure calculation: <measuring point xx.xx> altitude <sea level pressure xxxx.xxx> */
 #define PNORM_FILE		"pnorm.txt"
@@ -40,8 +47,13 @@ typedef struct
 	double psl;
 	double hmp;
 	} pnorm_param_t;
-
-extern SemaphoreHandle_t pthfile_mutex;
+typedef struct
+	{
+	double mlb;
+	int sqcmp;
+	} pgcal_t;
+	
+//extern SemaphoreHandle_t pthfile_mutex;
 
 void register_westaop(void);
 /*

@@ -12,7 +12,7 @@
 #ifndef MAIN_PROJECT_SPECIFIC_H_
 #define MAIN_PROJECT_SPECIFIC_H_
 
-#define TEST_BUILD 1
+#define TEST_BUILD 0
 #if(TEST_BUILD == 1)
 	#define WITH_CONSOLE
 	#define TEST1
