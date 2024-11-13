@@ -23,12 +23,14 @@
 #include "common_defines.h"
 #include "external_defs.h"
 #include "project_specific.h"
+#include "gpios.h"
 #include "mqtt_ctrl.h"
+#include "westaop.h"
 #include "dht22.h"
 
 #if ACTIVE_CONTROLLER == WESTA_CONTROLLER
 
-static const char *TAG = "DHT_RMT";
+static const char *TAG = "DHT";
 //static RingbufHandle_t ringbuf_handle = NULL;
 static SemaphoreHandle_t dhtd_mutex;
 static QueueHandle_t dht_receive_queue;
@@ -109,7 +111,7 @@ int dht_init()
 	return ret;
 	}
 //static int dht_parse(rmt_item32_t *symbol, int n_symbols, dht_data_t * dhtd)
-static int dht_parse(rmt_symbol_word_t *symbol, int n_symbols, dht_data_t * dhtd)
+static int dht_parse(rmt_symbol_word_t *symbol, int n_symbols, th_data_t * dhtd)
 	{
 	int k, i, bit, ret;
 	int16_t temp = 0, hum = 0, cs = 0, csc = 0;
@@ -173,7 +175,7 @@ static int dht_parse(rmt_symbol_word_t *symbol, int n_symbols, dht_data_t * dhtd
 		ret = ESP_FAIL;
 	return ret;
 	}
-int get_dht_data(dht_data_t * dhtd)
+int get_dht_data(th_data_t * dhtd)
 	{
 	rmt_symbol_word_t raw_symbols[64]; // 64 symbols should be sufficient for a standard NEC frame
 	int ret = ESP_OK;
@@ -210,8 +212,7 @@ int get_dht_data(dht_data_t * dhtd)
 				//ret = dht_parse(symbol, n_symbol, dhtd);
 				ret = dht_parse(rx_data.received_symbols, rx_data.num_symbols, dhtd);
 				char buf[50];
-				ESP_LOGI(TAG, "Temperature = %8.1f", dhtd->temperature);
-				ESP_LOGI(TAG, "Humidity    = %8.1f (%d)", dhtd->humidity, ret);
+				ESP_LOGI(TAG, "Temperature = %8.3lf Humidity = %8.3lf", dhtd->temperature, dhtd->humidity);
 				sprintf(buf, "DHT\1%.1f\1%.1f", dhtd->temperature, dhtd->humidity);
 				publish_topic(TOPIC_STATE, buf, 0, 0);
 				}

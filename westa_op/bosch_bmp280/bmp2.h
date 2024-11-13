@@ -86,7 +86,8 @@ typedef struct bmp2_uncomp_data bmp2_uncomp_data_t;
  * @retval   0 -> Success.
  * @retval < 0 -> Fail.
  */
-int8_t bmp2_init(bmp2_dev_t *dev);
+
+ int8_t bmp2_init(bmp2_dev_t *dev);
 
 /**
  * \ingroup bmp2

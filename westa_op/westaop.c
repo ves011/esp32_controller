@@ -9,30 +9,34 @@
 #include <string.h>
 #include <unistd.h>
 #include "driver/gpio.h"
+#include "esp_err.h"
 #include "esp_log.h"
-#include "driver/i2c.h"
+//#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "esp_console.h"
 #include "argtable3/argtable3.h"
 #include "esp_timer.h"
+#include "freertos/projdefs.h"
 #include "hal/gpio_types.h"
 #include "math.h"
 #include "errno.h"
-#include "ctype.h"
 #include "esp_netif.h"
-//#include "esp_spi_flash.h"
-#include "esp_spiffs.h"
-#include "esp_vfs_dev.h"
-#include "esp_vfs_fat.h"
 #include "driver/gptimer.h"
 #include "mqtt_client.h"
 #include "common_defines.h"
+#include "project_specific.h"
+#include "gpios.h"
 #include "external_defs.h"
 #include "mqtt_ctrl.h"
 #include "utils.h"
+#include "onewire_bus.h"
+#include "ds18b20.h"
+#include "westaop.h"
 #include "bmp2_defs.h"
 #include "bmp2.h"
 #include "dht22.h"
-#include "westaop.h"
+#include "aht20.h"
+
 
 #if ACTIVE_CONTROLLER == WESTA_CONTROLLER
 
@@ -58,6 +62,8 @@ static double hmp;
 static double pnorm;
 static double ml_b;
 static int sq_cmp;
+static i2c_master_dev_handle_t aht_handle;
+static i2c_master_dev_handle_t bmp_handle;
 
 // no need sice data is saved in the remote database
 //SemaphoreHandle_t pthfile_mutex;
@@ -91,8 +97,7 @@ static int get_bmp_data(bmp_data_t *bmpdata)
 		if(res == BMP2_OK)
 			{
 			char buf[50];
-			ESP_LOGI(TAG, "Temperature = %8.3f", bmpdata->temperature);
-			ESP_LOGI(TAG, "Pressure    = %8.3f", bmpdata->pressure);
+			ESP_LOGI("BMP", "Temperature = %8.3f                     Pressure = %8.3lf", bmpdata->temperature, bmpdata->pressure);
 			sprintf(buf, "BMP\1%.3f\1%.3f", bmpdata->temperature, bmpdata->pressure);
 			publish_topic(TOPIC_STATE, buf, 0, 0);
 			}
@@ -130,7 +135,8 @@ static void my_usleep(uint32_t period, void *intf_ptr)
  */
 static BMP2_INTF_RET_TYPE bmp280_read(uint8_t reg_addr, uint8_t *reg_data, uint32_t length, void *intf_ptr)
 	{
-	int ret = i2c_master_write_read_device(I2C_MASTER_NUM, BMP280_I2C_ADDRESS, &reg_addr, 1, reg_data, length, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+	int ret = BMP2_E_COM_FAIL;
+	ret = i2c_master_transmit_receive(bmp_handle, &reg_addr, 1, reg_data, length, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 	if(ret == ESP_OK)
 		ret = BMP2_OK;
 	else
@@ -143,12 +149,12 @@ static BMP2_INTF_RET_TYPE bmp280_read(uint8_t reg_addr, uint8_t *reg_data, uint3
 static BMP2_INTF_RET_TYPE bmp280_write(uint8_t reg_addr, const uint8_t *reg_data, uint32_t length, void *intf_ptr)
 	{
 	uint8_t *wr_buf = calloc(length + 1, 1);
-	int ret;
+	int ret = BMP2_E_COM_FAIL;
 	if(wr_buf)
 		{
 		wr_buf[0] = reg_addr;
 		memcpy(wr_buf + 1, reg_data, length);
-		ret = i2c_master_write_to_device(I2C_MASTER_NUM, BMP280_I2C_ADDRESS, wr_buf, length + 1, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+		ret = i2c_master_transmit(bmp_handle, wr_buf, length + 1, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 		if(ret == ESP_OK)
 			ret = BMP2_OK;
 		else
@@ -164,20 +170,46 @@ static BMP2_INTF_RET_TYPE bmp280_write(uint8_t reg_addr, const uint8_t *reg_data
 	return ret;
 	}
 
+
+
 static esp_err_t i2c_master_init(void)
 	{
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = I2C_MASTER_SDA_IO,
-        .scl_io_num = I2C_MASTER_SCL_IO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ,
-    	};
-
-    i2c_param_config(I2C_MASTER_NUM, &conf);
-
-    return i2c_driver_install(I2C_MASTER_NUM, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
+	i2c_master_bus_config_t i2c_mst_config = {
+	    .clk_source = I2C_CLK_SRC_DEFAULT,
+	    .i2c_port = -1,
+	    .scl_io_num = I2C_MASTER_SCL_IO,
+	    .sda_io_num = I2C_MASTER_SDA_IO,
+	    .glitch_ignore_cnt = 7,
+		};
+	i2c_master_bus_handle_t bus_handle;
+	ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
+	i2c_device_config_t dev_cfg = {
+    	.dev_addr_length = I2C_ADDR_BIT_LEN_7,
+    	.scl_speed_hz = 100000,
+		};
+	if(i2c_master_probe(bus_handle, BMP280_I2C_ADDRESS, -1) == ESP_OK)
+		{
+		dev_cfg.device_address = BMP280_I2C_ADDRESS;
+		ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &bmp_handle));
+		ESP_LOGI(TAG, "BMP280@%x found", BMP280_I2C_ADDRESS);
+		}
+	else 
+		{
+		ESP_LOGI(TAG, "BMP280@%x not found", BMP280_I2C_ADDRESS);
+		bmp_handle = NULL;
+		}
+	if(i2c_master_probe(bus_handle, AHT20_I2C_ADDRESS, -1) == ESP_OK)
+		{
+		dev_cfg.device_address = AHT20_I2C_ADDRESS;
+		ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &aht_handle));
+		ESP_LOGI(TAG, "AHT20@%x found", AHT20_I2C_ADDRESS);
+		}
+	else
+		{
+		ESP_LOGI(TAG, "AHT20@%x not found", AHT20_I2C_ADDRESS);
+		aht_handle = NULL;
+		}
+    return ESP_OK;
 	}
 
 int do_westaop(int argc, char **argv)
@@ -185,7 +217,8 @@ int do_westaop(int argc, char **argv)
 	int res = BMP2_OK;
 	struct bmp2_config conf;
 	bmp_data_t bmpdata;
-	dht_data_t dhtdata;
+	th_data_t dhtdata, ahtdata;
+	int count;
 	int nerrors = arg_parse(argc, argv, (void **)&westaop_args);
     if (nerrors != 0)
     	{
@@ -195,7 +228,17 @@ int do_westaop(int argc, char **argv)
     if(!strcmp(westaop_args.dst->sval[0], "bmp"))
     	{
    		if(!strcmp(westaop_args.op->sval[0], "read"))
-   			get_bmp_data(&bmpdata);
+   			{
+   			if(!strcmp(westaop_args.op->sval[0], "read"))
+				{
+				if(westaop_args.os_mode->count)
+					count = westaop_args.os_mode->ival[0];
+				else
+	 				count = 1;
+	 			for(int i = 0; i < count; i++)
+	    			get_bmp_data(&bmpdata);
+	    		}
+	    	}
    		else if(!strcmp(westaop_args.op->sval[0], "state"))
 			get_bmp_status();
 		else if(!strcmp(westaop_args.op->sval[0], "reset"))
@@ -275,8 +318,27 @@ int do_westaop(int argc, char **argv)
     else if(!strcmp(westaop_args.dst->sval[0], "dht"))
     	{
     	if(!strcmp(westaop_args.op->sval[0], "read"))
-    		get_dht_data(&dhtdata);
+			{
+			if(westaop_args.os_mode->count)
+				count = westaop_args.os_mode->ival[0];
+			else
+ 				count = 1;
+ 			for(int i = 0; i < count; i++)
+    			get_dht_data(&dhtdata);
+    		}
     	}
+    else if(!strcmp(westaop_args.dst->sval[0], "aht"))
+    	{
+		if(!strcmp(westaop_args.op->sval[0], "read"))
+			{
+			if(westaop_args.os_mode->count)
+				count = westaop_args.os_mode->ival[0];
+			else
+ 				count = 1;
+ 			for(int i = 0; i < count; i++)
+    			get_aht_data(&ahtdata);
+    		}
+		}
 	else if(!strcmp(westaop_args.dst->sval[0], "rg"))
     	{
     	if(!strcmp(westaop_args.op->sval[0], "cal"))
@@ -369,9 +431,9 @@ static void pth_poll()
 	{
 	msg_t msg;
 	bmp_data_t bmpdata;
-	dht_data_t dhtdata;
+	th_data_t dhtdata, ahtdata;
 	int mlmp;
-	int resb, resd;
+	int resb, resd, resa;
 	struct tm timeinfo = { 0 };
 	char bufd[40], strpub[200];
 	int bucket_counter = 0;
@@ -394,10 +456,13 @@ static void pth_poll()
 					strftime(bufd, sizeof(bufd), "%Y-%m-%dT%H:%M:%S", &timeinfo);
 					resb = get_bmp_data(&bmpdata);
 					resd = get_dht_data(&dhtdata);
+					resa = get_aht_data(&ahtdata);
 					if(resb != BMP2_OK)
 						bmpdata.temperature = bmpdata.pressure = 0;
 					if(resd != ESP_OK)
 						dhtdata.humidity = dhtdata.temperature = 0;
+					if(resa != ESP_OK)
+						ahtdata.humidity = ahtdata.temperature = 0;
 					mlmp = (ml_b * 10000 * bucket_counter) / sq_cmp;
 					ESP_LOGI(TAG, "ml/mp: %d / bucket_counter: %d", mlmp, bucket_counter);
 					sprintf(strpub, "%s\1%.2lf\1%.2lf\1%.2lf\1%.1lf\1%.1lf\1%d",
@@ -429,11 +494,7 @@ void register_westaop(void)
 	uint8_t pmode = 0xff;
 	struct bmp2_config conf;
 	pgcal_t rgcal;
-	bmpdev.intf = BMP2_I2C_INTF;
-	bmpdev.delay_us = my_usleep;
-	bmpdev.read = bmp280_read;
-	bmpdev.write = bmp280_write;
-	bmpdev.intf_ptr = NULL;
+	
 	pnorm_param_t param = {0, 0};
 	if(rw_params(PARAM_READ, PARAM_RGCAL, &rgcal) == ESP_OK)
 		{
@@ -465,50 +526,51 @@ void register_westaop(void)
 		}
 
 	int res = i2c_master_init();
-	res = bmp2_init(&bmpdev);
-	if(res == BMP2_OK)
+	if(bmp_handle)
 		{
-    	res = bmp2_get_config(&conf, &bmpdev);
-    	res = bmp2_get_power_mode(&pmode, &bmpdev);
-    	if(res == BMP2_OK)
-    		{
-    		ESP_LOGI(TAG, "bmp280 chip ID: %0x \n%0x %0x %0x %0x %0x %0x\nPower mode = %d",
-    					bmpdev.chip_id, conf.filter, conf.odr, conf.os_mode, conf.os_pres, conf.os_temp, conf.spi3w_en, bmpdev.power_mode);
-    		ESP_LOGI(TAG, "bmp280 cal param: %6d %6d \n%6d %6d %6d %6d %6d\n%6d %6d %6d %6d %6d", bmpdev.calib_param.dig_t1, bmpdev.calib_param.dig_t2
-    								, bmpdev.calib_param.dig_p1, bmpdev.calib_param.dig_p2, bmpdev.calib_param.dig_p3, bmpdev.calib_param.dig_p4, bmpdev.calib_param.dig_p5
-    								, bmpdev.calib_param.dig_p6, bmpdev.calib_param.dig_p7, bmpdev.calib_param.dig_p8, bmpdev.calib_param.dig_p9, bmpdev.calib_param.dig_p10);
-    		conf.os_mode = BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
-    		conf.filter = BMP2_FILTER_COEFF_16;
-    		conf.os_pres = 5; // BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
-    		conf.os_temp = 2; //BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
-    		conf.odr = BMP2_ODR_500_MS;
-    		res = bmp2_set_power_mode(BMP2_POWERMODE_NORMAL, &conf, &bmpdev);
-    		if(res == BMP2_OK)
-    			{
-				res = bmp2_get_config(&conf, &bmpdev);
-				ESP_LOGI(TAG, "bmp280 config: %0x %0x  %0x %0x  %0x\n", conf.filter, conf.odr, conf.os_pres, conf.os_temp, conf.spi3w_en);
-				osrs_t = conf.os_temp;
-				osrs_p = conf.os_pres;
-				res = bmp2_get_power_mode(&pmode, &bmpdev);
-				ESP_LOGI(TAG, "bmp280 power mode: %0x", pmode);
-				}
-			else
-				ESP_LOGI(TAG, "error during configuration %d", res);
-    		}
+		bmpdev.intf = BMP2_I2C_INTF;
+		bmpdev.delay_us = my_usleep;
+		bmpdev.read = bmp280_read;
+		bmpdev.write = bmp280_write;
+		bmpdev.intf_ptr = NULL;
+		res = bmp2_init(&bmpdev);
+		if(res == BMP2_OK)
+			{
+	    	res = bmp2_get_config(&conf, &bmpdev);
+	    	res = bmp2_get_power_mode(&pmode, &bmpdev);
+	    	if(res == BMP2_OK)
+	    		{
+	    		ESP_LOGI(TAG, "bmp280 chip ID: %0x \n%0x %0x %0x %0x %0x %0x\nPower mode = %d",
+	    					bmpdev.chip_id, conf.filter, conf.odr, conf.os_mode, conf.os_pres, conf.os_temp, conf.spi3w_en, bmpdev.power_mode);
+	    		ESP_LOGI(TAG, "bmp280 cal param: %6d %6d \n%6d %6d %6d %6d %6d\n%6d %6d %6d %6d %6d", bmpdev.calib_param.dig_t1, bmpdev.calib_param.dig_t2
+	    								, bmpdev.calib_param.dig_p1, bmpdev.calib_param.dig_p2, bmpdev.calib_param.dig_p3, bmpdev.calib_param.dig_p4, bmpdev.calib_param.dig_p5
+	    								, bmpdev.calib_param.dig_p6, bmpdev.calib_param.dig_p7, bmpdev.calib_param.dig_p8, bmpdev.calib_param.dig_p9, bmpdev.calib_param.dig_p10);
+	    		conf.os_mode = BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
+	    		conf.filter = BMP2_FILTER_COEFF_16;
+	    		conf.os_pres = 5; // BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
+	    		conf.os_temp = 2; //BMP2_OS_MODE_ULTRA_HIGH_RESOLUTION;
+	    		conf.odr = BMP2_ODR_500_MS;
+	    		res = bmp2_set_power_mode(BMP2_POWERMODE_NORMAL, &conf, &bmpdev);
+	    		if(res == BMP2_OK)
+	    			{
+					res = bmp2_get_config(&conf, &bmpdev);
+					ESP_LOGI(TAG, "bmp280 config: %0x %0x  %0x %0x  %0x\n", conf.filter, conf.odr, conf.os_pres, conf.os_temp, conf.spi3w_en);
+					osrs_t = conf.os_temp;
+					osrs_p = conf.os_pres;
+					res = bmp2_get_power_mode(&pmode, &bmpdev);
+					ESP_LOGI(TAG, "bmp280 power mode: %0x", pmode);
+					}
+				else
+					ESP_LOGI(TAG, "error during configuration %d", res);
+	    		}
+			}
+		if(res != BMP2_OK)
+			ESP_LOGI(TAG, "Cannot initialize i2c driver. Error = %d", res);
 		}
-	if(res != BMP2_OK)
-		ESP_LOGI(TAG, "Cannot initialize i2c driver. Error = %d", res);
+	if(aht_handle)
+		aht20_init(aht_handle);
 	dht_init();
-// test for normal mode
-//	bmp_data_t bmpdata;
-//	while(1 && res == BMP2_OK)
-//		{
-//		get_bmp_data(&bmpdata);
-//		vTaskDelay(2000 / portTICK_PERIOD_MS); //wait 2 seconds
-//		}
-// end test for normal mode
-
-	westaop_args.dst = arg_str1(NULL, NULL, "<dest>", "bmp | dht");
+	westaop_args.dst = arg_str1(NULL, NULL, "<dest>", "bmp | dht | aht");
 	westaop_args.op = arg_str1(NULL, NULL, "<op>", "status | set | read");
 	westaop_args.os_mode = arg_int0(NULL, NULL, "<os_mode>", "over sampling mode");
 	westaop_args.filter = arg_int0(NULL, NULL, "<filter>", "filter coeffs");

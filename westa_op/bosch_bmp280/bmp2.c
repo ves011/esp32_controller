@@ -43,9 +43,11 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
+#include "driver/i2c_master.h"
 
 #include "bmp2_defs.h"
 #include "bmp2.h"
+
 
 /********************** Static function declarations ************************/
 
@@ -227,31 +229,24 @@ static int8_t st_check_boundaries(int32_t utemperature, int32_t upressure);
  * It reads the chip-id and calibration data from the sensor.
  */
 int8_t bmp2_init(struct bmp2_dev *dev)
-{
+	{
     int8_t rslt;
-
     rslt = null_ptr_check(dev);
-
     if (rslt == BMP2_OK)
-    {
+    	{
         rslt = bmp2_get_regs(BMP2_REG_CHIP_ID, &dev->chip_id, 1, dev);
 
         /* Check for chip id validity */
         if (rslt == BMP2_OK)
-        {
+        	{
             if (dev->chip_id == BMP2_CHIP_ID)
-            {
                 rslt = get_calib_param(dev);
-            }
             else
-            {
                 rslt = BMP2_E_DEV_NOT_FOUND;
-            }
-        }
-    }
-
+        	}
+    	}
     return rslt;
-}
+	}
 
 /*!
  * @brief This API reads the data from the given register address of the
