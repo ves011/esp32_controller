@@ -121,7 +121,8 @@ void app_main(void)
 
 	tsync = 0;
 	wifi_join(DEFAULT_SSID, DEFAULT_PASS, JOIN_TIMEOUT_MS);
-	rw_params(PARAM_READ, PARAM_CONSOLE, &console_state);
+	if(rw_console_state(PARAM_READ, &console_state) == ESP_FAIL)
+		console_state = CONSOLE_ON;
 	esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 	//tcp_log_task_handle = NULL;
     tcp_log_evt_queue = NULL;

@@ -123,7 +123,7 @@ int get_aht_data(th_data_t *ahtdata)
 	      				crc = (crc << 1);
 	    			}
 	  			}
-	  		if(crc == rd_buf[6])
+			if(crc == rd_buf[6])
 				{
 				temp = rd_buf[3];
 				temp = (temp << 8) & 0xf00; 

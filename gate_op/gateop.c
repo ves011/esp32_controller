@@ -32,9 +32,9 @@
 #include "esp_log.h"
 #include "mqtt_client.h"
 
-#include "utils.h"
 #include "common_defines.h"
 #include "external_defs.h"
+#include "utils.h"
 #include "mqtt_ctrl.h"
 #include "gateop.h"
 

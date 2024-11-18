@@ -21,8 +21,10 @@
 #define I2C_MASTER_RX_BUF_DISABLE   0                       /*!< I2C master doesn't need buffer */
 #define I2C_MASTER_TIMEOUT_MS       1000
 
- /** address of BMP280 device */
-#define BMP280_I2C_ADDRESS			0x77
+ /** address of BMP280 devices */
+#define BMP280_I2C_ADDRESS_0			0x76
+#define BMP280_I2C_ADDRESS_1			0x77
+
  /** reading interval of pressure temp and humidity */
 //#define PTH_POLL_INT				1800 	//30 mins
 #define PTH_POLL_INT				10 	//30 sec

@@ -12,18 +12,18 @@
 #ifndef MAIN_PROJECT_SPECIFIC_H_
 #define MAIN_PROJECT_SPECIFIC_H_
 
-#define TEST_BUILD 1
+#define TEST_BUILD (1)
 #if(TEST_BUILD == 1)
 	#define WITH_CONSOLE
 	#define TEST1
-	#define CTRL_DEV_ID					100
+	#define CTRL_DEV_ID					(100)
 #else
-	#define CTRL_DEV_ID					1
+	#define CTRL_DEV_ID					(1)
 #endif
 
 #define ACTIVE_CONTROLLER			WESTA_CONTROLLER
-#define WIFI_STA_ON 					1
-#define MQTT_PUBLISH					0
+#define WIFI_STA_ON 					(1)
+#define MQTT_PUBLISH					(0)
 
 
 #endif /* MAIN_PROJECT_SPECIFIC_H_ */
