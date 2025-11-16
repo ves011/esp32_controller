@@ -28,7 +28,8 @@
 #include "esp_netif.h"
 #include "lwip/sockets.h"
 #include "esp_pm.h"
-//#include "esp32/clk.h"
+#include "driver/i2c_master.h"
+#include "project_specific.h"
 #include "common_defines.h"
 #include "cmd_wifi.h"
 #include "cmd_system.h"
@@ -38,17 +39,22 @@
 #include "mqtt_ctrl.h"
 #include "ntp_sync.h"
 #include "esp_ota_ops.h"
-#include "gateop.h"
+
+#if ACTIVE_CONTROLLER == AGATE_CONTROLLER
+	#include "gateop.h"
+#endif
 #include "hal/adc_types.h"
 #include "gpios.h"
-#include "westaop.h"
+#if ACTIVE_CONTROLLER == WESTA_CONTROLLER
+	#include "westaop.h"
+#endif
 
 //#include "driver/adc.h"
 //#include "esp_adc_cal.h"
 #include "external_defs.h"
 
 #define TAG "ctrl_dev"
-#define PROMPT_STR "CTRLDEV"
+
 #define CONFIG_STORE_HISTORY 1
 #define CONFIG_CONSOLE_MAX_COMMAND_LINE_LENGTH	1024
 
@@ -59,6 +65,7 @@
 console_state_t console_state;
 int restart_in_progress;
 int controller_op_registered;
+QueueHandle_t dev_mon_queue = NULL;
 
 
 static void initialize_nvs(void)
@@ -75,11 +82,15 @@ static void initialize_nvs(void)
 void app_main(void)
 	{
 	gpio_install_isr_service(0);
+#if 0
 #if ACTIVE_CONTROLLER == AGATE_CONTROLLER
 	int bp_ctrl = 6; //IO6 on J5 pin 8
 #elif ACTIVE_CONTROLLER == WESTA_CONTROLLER
 	int bp_ctrl = 8; //IO8 on J4 pin 8
+#elif ACTIVE_CONTROLLER == OTA_CONTROLLER
+	int bp_ctrl = 8; //IO8 on J4 pin 8
 #endif
+
 	gpio_config_t io_conf;
 	io_conf.intr_type = GPIO_INTR_DISABLE;
 	io_conf.mode = GPIO_MODE_INPUT;
@@ -112,9 +123,11 @@ void app_main(void)
     		}
     	}
 	gpio_reset_pin(bp_ctrl);
+#endif
 	restart_in_progress = 0;
 	console_state = CONSOLE_OFF;
 	setenv("TZ","EET-2EEST,M3.4.0/03,M10.4.0/04",1);
+	ESP_LOGI(TAG, "main 1");
 	spiffs_storage_check();
 	initialize_nvs();
 	controller_op_registered = 0;
@@ -126,12 +139,13 @@ void app_main(void)
 	esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
 	//tcp_log_task_handle = NULL;
     tcp_log_evt_queue = NULL;
-	tcp_log_init();
-	esp_log_set_vprintf(my_log_vprintf);
 	sync_NTP_time();
 
 	if(mqtt_start() != ESP_OK)
 		esp_restart();
+	
+	tcp_log_init();
+	esp_log_set_vprintf(my_log_vprintf);
 #ifdef WITH_CONSOLE
 	esp_console_repl_t *repl = NULL;
     esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
@@ -163,12 +177,14 @@ void app_main(void)
 #if ACTIVE_CONTROLLER == AGATE_CONTROLLER
 	register_gateop();
 #endif
+
 #if ACTIVE_CONTROLLER == WESTA_CONTROLLER
 	register_westaop();
 #endif
 	controller_op_registered = 1;
 
 #ifdef WITH_CONSOLE
+	repl_config.task_stack_size = 8192;
 #if defined(CONFIG_ESP_CONSOLE_UART_DEFAULT) || defined(CONFIG_ESP_CONSOLE_UART_CUSTOM)
     esp_console_dev_uart_config_t hw_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_uart(&hw_config, &repl_config, &repl));
@@ -179,7 +195,6 @@ void app_main(void)
 
 #elif defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG)
     esp_console_dev_usb_serial_jtag_config_t hw_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
-    repl_config.task_stack_size = 8192;
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&hw_config, &repl_config, &repl));
     //ESP_LOGI(TAG, "console stack: %d", repl_config.task_stack_size);
 

@@ -25,13 +25,12 @@
 #include "mqtt_client.h"
 #include "sys/stat.h"
 #include "common_defines.h"
-#include "project_specific.h"
+#include "../main/project_specific.h"
 #include "gpios.h"
 #include "external_defs.h"
 #include "mqtt_ctrl.h"
 #include "utils.h"
-#include "onewire_bus.h"
-#include "ds18b20.h"
+#include "i2ccomm.h"
 #include "westaop.h"
 #include "bmp2_defs.h"
 #include "bmp2.h"
@@ -178,55 +177,31 @@ static BMP2_INTF_RET_TYPE bmp280_write(uint8_t reg_addr, const uint8_t *reg_data
 
 
 
-static esp_err_t i2c_master_init(void)
+static void probe_devices()
 	{
-	i2c_master_bus_config_t i2c_mst_config = {
-	    .clk_source = I2C_CLK_SRC_DEFAULT,
-	    .i2c_port = -1,
-	    .scl_io_num = I2C_MASTER_SCL_IO,
-	    .sda_io_num = I2C_MASTER_SDA_IO,
-	    .glitch_ignore_cnt = 7,
-		};
-	i2c_master_bus_handle_t bus_handle;
-	ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_mst_config, &bus_handle));
-	i2c_device_config_t dev_cfg = {
-    	.dev_addr_length = I2C_ADDR_BIT_LEN_7,
-    	.scl_speed_hz = 100000,
-		};
-	if(i2c_master_probe(bus_handle, BMP280_I2C_ADDRESS_0, -1) == ESP_OK)
+	if(i2c_probe_device(0, BMP280_I2C_ADDRESS_0) == ESP_OK)
 		{
-		dev_cfg.device_address = BMP280_I2C_ADDRESS_0;
-		ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &bmp_handle_0));
+		bmp_handle_0 = i2c_add_device(0, BMP280_I2C_ADDRESS_0);
 		ESP_LOGI(TAG, "BMP280@%x found", BMP280_I2C_ADDRESS_0);
 		}
 	else 
-		{
 		ESP_LOGI(TAG, "BMP280@%x not found", BMP280_I2C_ADDRESS_0);
-		bmp_handle_0 = NULL;
-		}
-	if(i2c_master_probe(bus_handle, BMP280_I2C_ADDRESS_1, -1) == ESP_OK)
+		
+	if(i2c_probe_device(0, BMP280_I2C_ADDRESS_1) == ESP_OK)
 		{
-		dev_cfg.device_address = BMP280_I2C_ADDRESS_1;
-		ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &bmp_handle_1));
+		bmp_handle_1 = i2c_add_device(0, BMP280_I2C_ADDRESS_1);
 		ESP_LOGI(TAG, "BMP280@%x found", BMP280_I2C_ADDRESS_1);
 		}
 	else 
-		{
 		ESP_LOGI(TAG, "BMP280@%x not found", BMP280_I2C_ADDRESS_1);
-		bmp_handle_1 = NULL;
-		}
-	if(i2c_master_probe(bus_handle, AHT20_I2C_ADDRESS, -1) == ESP_OK)
+
+	if(i2c_probe_device(0, AHT20_I2C_ADDRESS) == ESP_OK)
 		{
-		dev_cfg.device_address = AHT20_I2C_ADDRESS;
-		ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_cfg, &aht_handle));
+		aht_handle = i2c_add_device(0, AHT20_I2C_ADDRESS);
 		ESP_LOGI(TAG, "AHT20@%x found", AHT20_I2C_ADDRESS);
 		}
 	else
-		{
 		ESP_LOGI(TAG, "AHT20@%x not found", AHT20_I2C_ADDRESS);
-		aht_handle = NULL;
-		}
-    return ESP_OK;
 	}
 
 int do_westaop(int argc, char **argv)
@@ -243,15 +218,16 @@ int do_westaop(int argc, char **argv)
         arg_print_errors(stderr, westaop_args.end, argv[0]);
         return 1;
     	}
-    if(!strstr(westaop_args.dst->sval[0], "bmp"))
+    ESP_LOGI(TAG, "dst: %s, op: %s", westaop_args.dst->sval[0], westaop_args.op->sval[0]);
+    if(strstr(westaop_args.dst->sval[0], "bmp"))
     	{
 		if(!strcmp(westaop_args.dst->sval[0], "bmp0"))
 			idx = 0;
 		else
  			idx = 1;
- 		if(idx >= 0)
+		if(idx >= 0)
  			{
-	   		if(!strcmp(westaop_args.op->sval[0], "read"))
+			if(!strcmp(westaop_args.op->sval[0], "read"))
 	   			{
 				if(westaop_args.os_mode->count)
 					count = westaop_args.os_mode->ival[0];
@@ -260,11 +236,11 @@ int do_westaop(int argc, char **argv)
 	 			for(int i = 0; i < count; i++)
 	    			get_bmp_data(idx, &bmpdata);
 		    	}
-	   		else if(!strcmp(westaop_args.op->sval[0], "state"))
+			else if(!strcmp(westaop_args.op->sval[0], "state"))
 				get_bmp_status(idx);
 			else if(!strcmp(westaop_args.op->sval[0], "reset"))
 				bmp2_soft_reset(&bmpdev[idx]);
-	   		else if(!strcmp(westaop_args.op->sval[0], "set"))
+			else if(!strcmp(westaop_args.op->sval[0], "set"))
 	   			{
 	   			if(bmp2_get_config(&conf, &bmpdev[idx]) == BMP2_OK)
 	   				{
@@ -287,7 +263,7 @@ int do_westaop(int argc, char **argv)
 	   				ESP_LOGI(TAG, "Could not read configuration. err = %d", res);
 	   			}
 	   		}
-   		else if(!strcmp(westaop_args.op->sval[0], "pset"))
+		else if(!strcmp(westaop_args.op->sval[0], "pset"))
    			{
    			pnorm_param_t param = {0, 0};
    			char buf[100];
@@ -494,7 +470,7 @@ static void pth_poll()
 						ahtdata.humidity = ahtdata.temperature = 0;
 					mlmp = (ml_b * 10000 * bucket_counter) / sq_cmp;
 					ESP_LOGI(TAG, "ml/mp: %d / bucket_counter: %d", mlmp, bucket_counter);
-					sprintf(strpub, "%s\1%.2lf\1%.2lf\1%.2lf\1%.2lf\1%.2lf\1%d\1%.2lf\1%.2lf\1%.2lf\1%.2lf",
+					sprintf(strpub, "%s\1%.2lf\1%.2lf\1%.2lf\1%.2lf\1%.2lf\1%d\1%.2lf\1%.2lf\1%.2lf\1%.2lf\1",
 							bufd, bmpdata0.temperature, bmpdata0.pressure, pnorm, 
 							dhtdata.humidity, dhtdata.temperature, mlmp,
 							bmpdata1.temperature, bmpdata1.pressure, 
@@ -506,7 +482,7 @@ static void pth_poll()
 				}
 			else if(msg.source == 2)
 				{
-				ESP_LOGI(TAG, "rg interrupt: rg_state: %lu  ts: %15llu", msg.val, msg.vts.ts);
+				ESP_LOGI(TAG, "rg interrupt: rg_state: %lu  ts: %15llu", (unsigned long)msg.val, msg.vts.ts);
 				if(/*last_rg_state == 0 &&*/ msg.val == 1)
 					{
 					if(msg.vts.ts - last_ts > RG_DEBOUNCE)
@@ -557,15 +533,19 @@ void register_westaop(void)
 		hmp = DEFAULT_ELEVATION;
 		}
 
-	ESP_ERROR_CHECK(i2c_master_init());
-	memset(&bmpdev[0], 0, sizeof(bmp2_dev_t));
-	memset(&bmpdev[1], 0, sizeof(bmp2_dev_t));
-	if(bmp_handle_0)
-		bmp_init(bmp_handle_0);
-	if(bmp_handle_1)
-		bmp_init(bmp_handle_1);
-	if(aht_handle)
-		aht20_init(aht_handle);
+	//ESP_ERROR_CHECK(i2c_master_init());
+	if(init_i2c(0) == ESP_OK)
+		{
+		probe_devices();
+		memset(&bmpdev[0], 0, sizeof(bmp2_dev_t));
+		memset(&bmpdev[1], 0, sizeof(bmp2_dev_t));
+		if(bmp_handle_0)
+			bmp_init(bmp_handle_0);
+		if(bmp_handle_1)
+			bmp_init(bmp_handle_1);
+		if(aht_handle)
+			aht20_init(aht_handle);
+		}
 	dht_init();
 	westaop_args.dst = arg_str1(NULL, NULL, "<dest>", "bmp | dht | aht");
 	westaop_args.op = arg_str1(NULL, NULL, "<op>", "status | set | read");

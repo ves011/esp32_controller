@@ -162,17 +162,18 @@ static int dht_parse(rmt_symbol_word_t *symbol, int n_symbols, th_data_t * dhtd)
 	 	 	 }
 	 	 csc = (((hum >> 8) & 0xff) + (hum & 0xff) + ((temp >> 8) & 0xff) + (temp & 0xff)) & 0xff;
 	 	 if(csc == cs)
-	 	 	 {
-			 double m = 1.;
-	 	 	 dhtd->humidity = hum / 10.;
-	 	 	 if(temp & 0x8000) // negative value
-	 	 	 	{
-				m = -1.;
-				temp &= 0x7fff;	   
-				}
-	 	 	 dhtd->temperature = m * temp / 10.;
-	 	 	 ret = ESP_OK;
-	 	 	 }
+	 	 	{
+			//double m = 1.;
+	 	 	dhtd->humidity = hum / 10.;
+	 	 	//if(temp & 0x8000) // negative value
+	 	 	//	{
+			//	m = -1.;
+			//	temp &= 0x7fff;	   
+			//	}
+	 	 	//dhtd->temperature = m * temp / 10.;
+	 	 	dhtd->temperature = temp / 10.;
+	 	 	ret = ESP_OK;
+	 	 	}
 	 	 else
 	 	 	 ret = ESP_ERR_INVALID_CRC;
 	 	 //ESP_LOGI(TAG, "humidity: %d, temp: %d, check sum: %x, %x", hum, temp, cs, csc);

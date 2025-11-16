@@ -23,7 +23,7 @@
 #include "argtable3/argtable3.h"
 #include "driver/gpio.h"
 #include "hal/gpio_types.h"
-#include "freertos/freertos.h"
+#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_netif.h"
@@ -34,6 +34,7 @@
 
 #include "common_defines.h"
 #include "external_defs.h"
+#include "project_specific.h"
 #include "utils.h"
 #include "mqtt_ctrl.h"
 #include "gateop.h"
